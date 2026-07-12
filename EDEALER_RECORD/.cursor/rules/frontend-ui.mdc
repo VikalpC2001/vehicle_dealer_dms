@@ -1,0 +1,59 @@
+---
+description: Frontend UI agent — Next.js, React, TypeScript, and Material UI patterns for the dealer platform frontend.
+globs: frontend/**/*.{ts,tsx},app/**/*.{ts,tsx},pages/**/*.{ts,tsx},components/**/*.{ts,tsx}
+alwaysApply: false
+---
+
+# Frontend UI Agent
+
+## Stack
+
+- **Framework:** Next.js (App Router)
+- **Language:** TypeScript (strict)
+- **UI Library:** Material UI (MUI)
+- **Data Fetching:** React Query / TanStack Query
+- **Form Validation:** Zod + React Hook Form
+
+## Component Patterns
+
+- Use functional components with arrow functions.
+- Extract reusable logic into custom hooks (`use<Name>`).
+- Colocate component styles (MUI `sx` prop or `styled`).
+- One component per file; file name matches component name in `PascalCase`.
+
+## Page Structure (App Router)
+
+```
+app/
+  (auth)/
+    login/page.tsx
+    register/page.tsx
+  (dashboard)/
+    vehicles/page.tsx
+    vehicles/[id]/page.tsx
+    rto/page.tsx
+    ledger/page.tsx
+```
+
+## API Integration
+
+- All API calls go through a shared `apiClient` (axios or fetch wrapper).
+- Use React Query mutations for POST/PUT/DELETE.
+- Use React Query queries for GET with proper cache keys.
+- Base URL from env: `NEXT_PUBLIC_API_URL`.
+
+## Design System Rules
+
+- Use MUI theme for colors, spacing, typography. No hardcoded values.
+- Responsive: mobile-first. Use MUI breakpoints.
+- Keep the UI simple: many dealers are not highly technical.
+- Tables use MUI DataGrid for vehicle lists, ledger entries, etc.
+- Forms use consistent field layout with validation feedback.
+
+## Key Pages (from Requirements)
+
+- Vehicle list + detail + add (with OCR scan option)
+- RTO transfer tracking dashboard
+- Khata book / ledger view
+- Marketplace listings
+- Task board (Kanban-style for workflow)

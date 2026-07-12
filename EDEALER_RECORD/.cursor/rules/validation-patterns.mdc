@@ -1,0 +1,41 @@
+---
+description: Validation patterns — Zod schema conventions for request validation.
+globs: src/validations/**/*.ts
+alwaysApply: false
+---
+
+# Validation Patterns (Zod)
+
+## Schema Structure
+
+Every validation schema wraps `body`, `params`, and/or `query`:
+
+```ts
+export const createVehicleSchema = z.object({
+  body: z.object({
+    registrationNumber: z.string().max(50),
+    make: z.string().max(100),
+  }),
+});
+```
+
+## Usage
+
+Apply via `validate` middleware in routes:
+
+```ts
+router.post('/', validate(createVehicleSchema), asyncHandler(createVehicle));
+```
+
+## Naming
+
+- Schema: `<action><Entity>Schema` (e.g. `createVehicleSchema`, `loginBodySchema`)
+- Inferred type: `export type CreateVehicleBody = z.infer<typeof createVehicleSchema>['body'];`
+
+## Rules
+
+- UUIDs: `z.string().uuid('Invalid ID')`
+- Email: `z.string().email('Invalid email')`
+- Pagination query: `z.object({ page: z.coerce.number().optional(), limit: z.coerce.number().optional() })`
+- Optional fields use `.optional()`, not `.nullable()`, unless the DB column is explicitly nullable.
+- Export the inferred body type alongside each schema for use in controllers.

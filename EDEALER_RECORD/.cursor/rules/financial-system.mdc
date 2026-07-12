@@ -1,0 +1,60 @@
+---
+description: Financial system agent — vehicle expenses, profit calculation, and khata book ledger.
+globs: src/**/*expense*,src/**/*profit*,src/**/*ledger*,src/**/*khata*,src/**/*financial*
+alwaysApply: false
+---
+
+# Financial System Agent
+
+## Vehicle Expenses
+
+Expense categories: Repair, Transport, RTO Fees, Agent Commission, Service Cost.
+
+Each expense record must include:
+- `vehicleId` (FK to Vehicle)
+- `dealerId` (FK to Dealer, for tenant isolation)
+- `category` (enum or string)
+- `amount` (Decimal)
+- `description` (optional)
+- `expenseDate`
+- `createdAt`, `updatedAt`
+
+## Profit Calculation
+
+```
+profit = salePrice - purchasePrice - SUM(expenses)
+```
+
+- Profit is computed, not stored. Calculate on read from vehicle sale data and linked expenses.
+- If the vehicle is not yet sold, show estimated profit using current asking price.
+
+## Khata Book (Ledger)
+
+Double-entry style ledger between parties:
+- Dealer ↔ Agent
+- Dealer ↔ Vendor
+- Dealer ↔ Buyer
+
+Each ledger entry:
+- `type`: CREDIT or DEBIT
+- `amount`: Decimal
+- `description`: text
+- `vehicleId`: optional FK (link to vehicle if applicable)
+- `partyId`: the other party in the transaction
+- `partyType`: AGENT, VENDOR, BUYER
+- `dealerId`: tenant scope
+- `transactionDate`
+- `createdAt`
+
+## Implementation Pattern
+
+- **Repository:** `expense.repository.ts`, `ledger.repository.ts`
+- **Service:** `expense.service.ts` (CRUD + validation), `ledger.service.ts` (entries + balance calculation), `profit.service.ts` (calculation)
+- **Controller:** `financial.controller.ts` with routes under `/vehicles/:id/expenses`, `/ledger`
+
+## Key Rules
+
+- All amounts use `Decimal` type in Prisma (`@db.Decimal(12, 2)`).
+- Expenses are always linked to a vehicle and scoped to a dealer.
+- Ledger balance = SUM(credits) - SUM(debits) for a given party pair.
+- Never delete ledger entries; use soft delete or reversal entries.

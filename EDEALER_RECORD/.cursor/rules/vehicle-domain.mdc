@@ -1,0 +1,66 @@
+---
+description: Vehicle, Workflow, and RTO domain agent — business rules for vehicle lifecycle, workflow engine, task management, and RTO transfer tracking.
+globs: src/**/*vehicle*,src/**/*process*,src/**/*workflow*,src/**/*task*,src/**/*rto*,prisma/schema.prisma
+alwaysApply: false
+---
+
+# Vehicle & Workflow Domain Agent
+
+## Vehicle Lifecycle
+
+Typical flow: Purchase → Inspection → Repair → Ready for Sale → Sold → RTO Transfer → Completed.
+
+Flows are flexible. Valid paths include:
+- Buy → Sell
+- Buy → Repair → Sell
+- Buy → Sell → RTO Transfer
+
+Every status change must be recorded in a status history log for audit.
+
+## Vehicle Model Fields
+
+Core: registration number, chassis number, engine number, make, model, registration date, manufacture month/year.
+
+Extended (to be added): purchase price, purchase date, sale price, sale date, fuel type, RC validity, owner name, owner address, dealer reference.
+
+## Workflow Engine (Jira-Style)
+
+Dealers configure custom workflows with:
+- **Processes** (workflow templates)
+- **Statuses** (stages in a workflow)
+- **Transitions** (allowed moves between statuses)
+
+Implementation pattern:
+- `WorkflowTemplate` defines a named workflow.
+- `WorkflowStatus` defines ordered statuses within a template.
+- `WorkflowTransition` defines valid from→to status pairs.
+- `VehicleProcess` links a vehicle to a workflow instance with current status.
+
+## Task & Subtask Management
+
+Vehicles may have tasks: Inspection, Repair, Document Verification, Cleaning, Transport.
+
+Each task: title, description, status, priority (Low/Medium/High/Urgent), assigned user, tags.
+Tasks may have subtasks (same structure, linked to parent task).
+
+## RTO Transfer Tracking
+
+When a vehicle is assigned to an agent, an RTO process is created.
+
+Stages: Documents Collected → Forms Submitted → Verification → Transfer Initiated → Transfer Completed → RC Received.
+
+Each status change is stored in history with timestamp and actor.
+
+## OCR Vehicle Entry
+
+When a dealer scans an RC book image:
+1. Image is uploaded.
+2. OCR service extracts: vehicle number, engine number, chassis number, registration date, owner name.
+3. Fields auto-fill; dealer confirms or edits.
+
+## Key Business Rules
+
+- All vehicle data is scoped to a dealer (multi-tenant).
+- Agents may work with multiple dealers simultaneously.
+- Vehicle profit = sale price - purchase price - total expenses.
+- Status transitions must follow the configured workflow; reject invalid transitions.

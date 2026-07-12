@@ -1,0 +1,46 @@
+---
+description: Database agent — Prisma schema conventions, migration workflow, and query patterns for PostgreSQL.
+globs: prisma/**,src/repositories/**/*.ts
+alwaysApply: false
+---
+
+# Database Agent (Prisma + PostgreSQL)
+
+## Schema Conventions
+
+- **Model names:** `PascalCase`, map to `snake_case` table: `@@map("vehicles")`
+- **Field names:** `camelCase`, map to `snake_case` column: `@map("field_name")`
+- **Primary keys:** UUID with `@id @default(dbgenerated("gen_random_uuid()")) @db.Uuid`
+- **Timestamps:** `createdAt` / `updatedAt` with `@db.Timestamp(6)` and `@default(now())` / `@updatedAt`
+- **Relations:** Always define both sides. Use `onDelete: Cascade` where parent deletion should cascade.
+- **Enums:** Prisma `enum` with `PascalCase` name, `UPPER_CASE` values.
+
+## Multi-Tenancy
+
+This system is multi-tenant. When adding tenant-scoped models:
+
+- Include `dealerId` FK referencing `Dealer`.
+- All queries must filter by `dealerId` to enforce data isolation.
+- Add `@@index([dealerId])` for performance.
+
+## Adding a New Model Checklist
+
+1. Add model to `prisma/schema.prisma` with proper `@@map`, `@map`, types.
+2. Run `npx prisma migrate dev --name <description>`.
+3. Create `src/repositories/<model>.repository.ts` with CRUD functions.
+4. Create types: `CreateXData`, `UpdateXData` interfaces in the repository.
+
+## Query Best Practices
+
+- Use `select` to limit returned fields when full model is not needed.
+- Use `include` sparingly; prefer explicit joins.
+- Use `parsePagination` and `buildPaginationMeta` from `src/utils/pagination.ts` for list endpoints.
+- Add `@@index` for frequently filtered columns (e.g. `dealerId`, `statusId`).
+
+## Existing Models
+
+User (includes `emailVerified`; related `EmailOtp` for signup/reset OTP hashes), Passkey, EmailOtp, Dealer, RtoService, UploadCategory, DealerWiseUploadCategory, DealerWiseUser, Vehicle, DealerStatus, DealerReference, VehicleProcess, Person, ProcessReference. **RBAC navigation:** `Module` (unique `moduleType` + `moduleName`), `Page` (unique `moduleId` + `slug`), `PageAction` (unique `pageId` + `actionName`), `RolePermission`.
+
+**RBAC:** `Role`, `Module`, `Page`, `PageAction`, `RolePermission`, `UserRole`. `Role.roleType` / `Module.moduleType` use `RoleType` (DEALER | AGENT). `Role.typeId` (required) = dealer or agent id; interpret with `roleType` (no polymorphic FK). Effective permission: **missing `RolePermission` row = deny**; `isAllowed: false` is an explicit deny. Page `slug` is unique **per module** (`@@unique([moduleId, slug])`).
+
+Enums: `PersonType` (SELLER, BUYER), `ReferenceType` (BUY, SELL), `RoleType` (DEALER, AGENT).

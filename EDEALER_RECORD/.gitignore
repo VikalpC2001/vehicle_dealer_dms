@@ -1,0 +1,46 @@
+# ── Dependencies ─────────────────────────────────────────────
+node_modules/
+.pnp
+.pnp.js
+
+# ── Build output ─────────────────────────────────────────────
+dist/
+build/
+*.tsbuildinfo
+
+# ── Environment / secrets (keep the example) ─────────────────
+# .env holds DATABASE_URL, JWT_SECRET, GEMINI_API_KEY, SMTP creds — never commit it.
+.env
+.env.*
+!.env.example
+
+# ── Logs ─────────────────────────────────────────────────────
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ── Test coverage ────────────────────────────────────────────
+coverage/
+.nyc_output/
+
+# ── Local file storage (uploads served from disk in dev) ─────
+uploads/
+
+# NOTE: prisma/migrations/ and prisma/seed.ts ARE committed (schema history + seed).
+#       The generated Prisma client lives in node_modules and is regenerated on install.
+
+# ── OS / editor ──────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ── Misc ─────────────────────────────────────────────────────
+.cache/
+tmp/
+*.pem

@@ -1,0 +1,50 @@
+---
+description: Authentication and security agent — password auth, passkey/WebAuthn, JWT, and RBAC patterns.
+globs: src/**/*auth*,src/**/*passkey*,src/**/*jwt*,src/middlewares/auth*
+alwaysApply: false
+---
+
+# Auth & Security Agent
+
+## Authentication Methods
+
+1. **Password:** bcrypt hash, JWT access + refresh tokens.
+2. **Passkey / WebAuthn:** `@simplewebauthn/server`, challenge-response, stored in `passkeys` table.
+
+Both methods issue the same JWT structure on success.
+
+## JWT Payload
+
+```ts
+{ sub: userId, email: emailId, role: Role }
+```
+
+Tokens signed with `config.JWT_SECRET`. Access token expires per `JWT_ACCESS_EXPIRES_IN`.
+
+## Auth Flow Files
+
+- `src/services/password-auth.service.ts` — hash, verify, register, find user
+- `src/services/passkey.service.ts` — WebAuthn registration + authentication
+- `src/services/challenge-store.ts` — in-memory challenge store (swap for Redis in production)
+- `src/controllers/auth.controller.ts` — HTTP handlers
+- `src/validations/auth.validation.ts` — Zod schemas
+- `src/routes/auth.routes.ts` — route definitions
+
+## Middleware
+
+- `authenticate`: verifies Bearer token, sets `req.user`.
+- `authorize(...roles)`: restricts by role after `authenticate`.
+
+## Security Rules
+
+- Never log passwords, tokens, or secrets.
+- Always hash passwords before storage (bcrypt, `config.BCRYPT_SALT_ROUNDS`).
+- WebAuthn challenges are single-use; consumed on verify.
+- Update passkey counter after every successful authentication (replay protection).
+- Validate `origin` and `rpID` in all WebAuthn verification calls.
+
+## User Roles
+
+Current: `ADMIN`, `USER`. Extend in `src/types/index.ts` `Role` enum.
+
+Future roles per requirements: `PLATFORM_ADMIN`, `DEALER_OWNER`, `DEALER_EMPLOYEE`, `AGENT`.

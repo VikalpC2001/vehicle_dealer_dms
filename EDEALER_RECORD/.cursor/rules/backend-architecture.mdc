@@ -1,0 +1,88 @@
+---
+description: Backend architecture agent — enforces Express module structure, clean architecture, and coding patterns.
+globs: src/**/*.ts
+alwaysApply: false
+---
+
+# Backend Architecture Agent
+
+## Module Structure
+
+When creating a new feature module (e.g. `vehicle`), create these files:
+
+```
+src/
+  controllers/  vehicle.controller.ts
+  services/     vehicle.service.ts
+  repositories/ vehicle.repository.ts
+  validations/  vehicle.validation.ts
+  routes/       vehicle.routes.ts
+```
+
+Register the route in `src/routes/index.ts`:
+```ts
+import vehicleRoutes from './vehicle.routes';
+router.use('/vehicles', vehicleRoutes);
+```
+
+## Controller Rules
+
+- Import service functions, not repositories.
+- Destructure validated body: `const { ... } = req.body as MyBody;`
+- Call service, then `sendSuccess(res, message, data, status)`.
+- Wrap with `asyncHandler` in route file, not in controller.
+- Never catch errors in controllers; let `errorHandler` middleware handle them.
+
+## Service Rules
+
+- Import repository functions, never `prisma` directly.
+- Throw `AppError` for business rule violations.
+- Keep functions pure where possible; side effects belong in repositories.
+- Export named async functions, not classes.
+
+## Repository Rules
+
+- One file per Prisma model.
+- Export typed interfaces for create/update input data.
+- Functions: `createX`, `findXById`, `findXByField`, `updateX`, `deleteX`.
+- Return Prisma types directly.
+
+## Route Rules
+
+- Use `validate(schema)` middleware before handler.
+- Use `authenticate` middleware on protected routes.
+- Use `authorize('ROLE')` for role-restricted routes.
+- Group related routes in a single Router.
+
+## Error Codes
+
+Use numeric codes in `AppError` for programmatic identification:
+- `40xx` — client errors (not found, invalid input)
+- `409x` — conflict
+- `401x` — auth errors
+- `500x` — server errors
+
+## Postman Collection & API Docs (Required)
+
+After **creating or updating** any API endpoint:
+
+### 1. Update Postman collection
+
+- **Location:** `docs/postman/EDealer-API.postman_collection.json` (or project-standard path).
+- **For each new/changed endpoint:** Add or edit a request with:
+  - Method and full path (e.g. `POST {{baseUrl}}/api/v1/auth/login`).
+  - Headers (e.g. `Content-Type: application/json`, `Authorization: Bearer {{token}}` when required).
+  - Body (raw JSON) with a valid example; use variables (e.g. `{{userId}}`) where useful.
+- Keep folder structure aligned with route groups (Auth, Vehicles, RTO, etc.).
+
+### 2. Update API documentation
+
+- **Location:** `docs/api/API.md` (or per-module files under `docs/api/`).
+- **For each new/changed endpoint:** Document:
+  - Method and path.
+  - Auth: none / Bearer required / optional.
+  - Request: body schema, query params, path params with types and validation rules.
+  - Response: success shape (status, `data` structure), error shape, and example JSON.
+  - Any application error codes (e.g. 4041, 4091) that this endpoint can return.
+
+Consider this part of the definition of done for any API change.

@@ -1,0 +1,30 @@
+# ── Monorepo root ────────────────────────────────────────────
+# Each app also has its own .gitignore:
+#   EDEALER_RECORD/.gitignore  (backend)
+#   RTO-Super-Admin/.gitignore (frontend)
+# These root rules are a safety net that applies at every depth.
+
+# OS / editor junk
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+
+# Logs
+*.log
+
+# Dependencies & build output (any depth)
+node_modules/
+dist/
+dist-ssr/
+build/
+
+# Environment / secrets — keep only the *.example templates
+.env
+.env.*
+!.env.example
+
+# Local file storage + coverage
+uploads/
+coverage/

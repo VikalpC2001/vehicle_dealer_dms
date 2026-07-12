@@ -1,0 +1,2871 @@
+{
+  "info": {
+    "name": "EDealer API",
+    "description": "Multi-tenant SaaS API for vehicle dealers and RTO agents. Base URL uses {{baseUrl}}/api/v1.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:4002"
+    },
+    {
+      "key": "token",
+      "value": ""
+    },
+    {
+      "key": "resetToken",
+      "value": ""
+    },
+    {
+      "key": "userId",
+      "value": ""
+    },
+    {
+      "key": "serviceId",
+      "value": ""
+    },
+    {
+      "key": "dealerId",
+      "value": ""
+    },
+    {
+      "key": "statusId",
+      "value": ""
+    },
+    {
+      "key": "vehicleId",
+      "value": ""
+    },
+    {
+      "key": "processId",
+      "value": ""
+    },
+    {
+      "key": "personId",
+      "value": ""
+    },
+    {
+      "key": "processUploadPhotoId",
+      "value": ""
+    },
+    {
+      "key": "processTaskId",
+      "value": ""
+    },
+    {
+      "key": "referenceId",
+      "value": ""
+    },
+    {
+      "key": "stateId",
+      "value": ""
+    },
+    {
+      "key": "cityId",
+      "value": ""
+    },
+    {
+      "key": "roleId",
+      "value": ""
+    },
+    {
+      "key": "moduleId",
+      "value": ""
+    },
+    {
+      "key": "pageId",
+      "value": ""
+    },
+    {
+      "key": "uploadPutUrl",
+      "value": ""
+    },
+    {
+      "key": "uploadFileKey",
+      "value": ""
+    },
+    {
+      "key": "uploadPublicUrl",
+      "value": ""
+    },
+    {
+      "key": "uploadCategoryId",
+      "value": ""
+    },
+    {
+      "key": "dwucId",
+      "value": ""
+    },
+    {
+      "key": "dealerWiseUserDwuId",
+      "value": ""
+    },
+    {
+      "key": "agentId",
+      "value": ""
+    },
+    {
+      "key": "awuId",
+      "value": ""
+    },
+    {
+      "key": "agentStatusId",
+      "value": ""
+    },
+    {
+      "key": "dealerAgentId",
+      "value": ""
+    },
+    {
+      "key": "assignmentId",
+      "value": ""
+    },
+    {
+      "key": "placeholderDealerId",
+      "value": ""
+    },
+    {
+      "key": "realDealerId",
+      "value": ""
+    },
+    {
+      "key": "counterpartyId",
+      "value": ""
+    },
+    {
+      "key": "ledgerEntryId",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/health",
+            "description": "Health-check endpoint for load balancers and monitoring."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Upload",
+      "item": [
+        {
+          "name": "Generate upload URL",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const json = pm.response.json();",
+                  "  if (json.data) {",
+                  "    pm.collectionVariables.set('uploadPutUrl', json.data.uploadUrl);",
+                  "    pm.collectionVariables.set('uploadFileKey', json.data.fileKey);",
+                  "    pm.collectionVariables.set('uploadPublicUrl', json.data.publicUrl);",
+                  "  }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fileName\": \"photo.png\",\n  \"contentType\": \"image/png\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/upload/generate",
+            "description": "Returns uploadUrl (PUT target), fileKey, and publicUrl. Run before 'Upload file (PUT raw)'."
+          }
+        },
+        {
+          "name": "Upload file (PUT raw)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "image/png"
+              }
+            ],
+            "body": {
+              "mode": "file",
+              "file": {
+                "src": ""
+              }
+            },
+            "url": "{{uploadPutUrl}}",
+            "description": "PUT raw file bytes to the URL from Generate upload URL. Set body to a PNG file (or change Content-Type to image/jpeg / image/webp and pick a matching file). Max 5MB."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Register",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"user@example.com\",\n  \"password\": \"securePassword123\",\n  \"userName\": \"John Doe\",\n  \"mobileNo\": \"+919876543210\",\n  \"gender\": \"male\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/auth/register",
+            "description": "Create a new user. Sends 6-digit signup OTP to email. No access JWT until verify-otp (SIGNUP_EMAIL_VERIFICATION)."
+          }
+        },
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const json = pm.response.json();",
+                  "  if (json.data) {",
+                  "    if (json.data.token) pm.collectionVariables.set('token', json.data.token);",
+                  "    if (json.data.user && json.data.user.userId) pm.collectionVariables.set('userId', json.data.user.userId);",
+                  "    if (json.data.user && json.data.user.dealerId) pm.collectionVariables.set('dealerId', json.data.user.dealerId);",
+                  "  }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"user@example.com\",\n  \"password\": \"securePassword123\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/auth/login",
+            "description": "Authenticate with email and password. Returns user (dealerId from DealerWiseUser) and JWT. Access token payload includes dealerId (null if unlinked). dealerId is saved to collection variable when present. Dealer-scoped APIs use the token; optional dealerId in query/body must match the token for non-ADMIN users."
+          }
+        },
+        {
+          "name": "Refresh Token",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/auth/refresh",
+            "description": "Exchange a valid refresh token for a new access token + rotated refresh token. No Authorization header. 4017 when the refresh token is invalid/expired/wrong-purpose."
+          }
+        },
+        {
+          "name": "Verify OTP (signup)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const json = pm.response.json();",
+                  "  if (json.data && json.data.token) pm.collectionVariables.set('token', json.data.token);",
+                  "  if (json.data && json.data.user && json.data.user.dealerId) pm.collectionVariables.set('dealerId', json.data.user.dealerId);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"user@example.com\",\n  \"otp\": \"123456\",\n  \"purpose\": \"SIGNUP_EMAIL_VERIFICATION\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/auth/verify-otp",
+            "description": "Verify 6-digit OTP from email after register. Returns access JWT and user."
+          }
+        },
+        {
+          "name": "Verify OTP (password reset)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const json = pm.response.json();",
+                  "  if (json.data && json.data.resetToken) pm.collectionVariables.set('resetToken', json.data.resetToken);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"user@example.com\",\n  \"otp\": \"123456\",\n  \"purpose\": \"PASSWORD_RESET\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/auth/verify-otp",
+            "description": "After forgot-password, verify 6-digit OTP. Saves resetToken for Reset Password request."
+          }
+        },
+        {
+          "name": "Resend OTP",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"user@example.com\",\n  \"purpose\": \"SIGNUP_EMAIL_VERIFICATION\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/auth/resend-otp",
+            "description": "Re-send OTP. purpose: SIGNUP_EMAIL_VERIFICATION or PASSWORD_RESET."
+          }
+        },
+        {
+          "name": "Forgot Password",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"user@example.com\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/auth/forgot-password",
+            "description": "Request password reset OTP (generic success message)."
+          }
+        },
+        {
+          "name": "Reset Password",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{resetToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"password\": \"newSecurePassword123\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/auth/reset-password",
+            "description": "Set new password using Bearer resetToken from verify-otp (PASSWORD_RESET). Expires per JWT_PASSWORD_RESET_EXPIRES_IN."
+          }
+        },
+        {
+          "name": "Passkey Register Options",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{userId}}\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/auth/passkey/register/options",
+            "description": "Get WebAuthn registration options. Requires Bearer token. userId must match the authenticated user (JWT sub). Use response options in navigator.credentials.create(), then call Passkey Register Verify with the credential."
+          }
+        },
+        {
+          "name": "Passkey Register Verify",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{userId}}\",\n  \"credential\": {}\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/auth/passkey/register/verify",
+            "description": "Verify WebAuthn registration response and store passkey. Body.credential is the object returned from navigator.credentials.create()."
+          }
+        },
+        {
+          "name": "Passkey Login Options",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"user@example.com\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/auth/passkey/login/options",
+            "description": "Get WebAuthn authentication options for passkey login. No auth required. Use response options in navigator.credentials.get(), then call Passkey Login Verify with the credential."
+          }
+        },
+        {
+          "name": "Passkey Login Verify",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"credential\": {}\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/auth/passkey/login/verify",
+            "description": "Verify WebAuthn authentication response. Returns user (same shape as password login: dealerId) and JWT."
+          }
+        }
+      ]
+    },
+    {
+      "name": "RTO Services",
+      "auth": {
+        "type": "bearer",
+        "bearer": [
+          {
+            "key": "token",
+            "value": "{{token}}",
+            "type": "string"
+          }
+        ]
+      },
+      "item": [
+        {
+          "name": "Create RTO Service",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"serviceName\": \"Registration Transfer\",\n  \"shortName\": \"REG\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/rto-services",
+            "description": "Create a new RTO service."
+          }
+        },
+        {
+          "name": "List RTO Services",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/rto-services?page=1&limit=10",
+            "description": "List RTO services (paginated)."
+          }
+        },
+        {
+          "name": "Update RTO Service Order",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "[\n  { \"serviceId\": \"85976904-58b3-4d47-a19c-8fc37863eee3\", \"serviceName\": \"Transfer Of Ownership\", \"shortName\": \"TO\", \"orderRank\": 1 },\n  { \"serviceId\": \"5a490966-1931-4313-b053-e5713d014fdc\", \"serviceName\": \"Renewal Of Registration\", \"shortName\": \"RRF\", \"orderRank\": 2 },\n  { \"serviceId\": \"a08b34a3-0863-4754-8220-434633c24c39\", \"serviceName\": \"Hypothecation Addition\", \"shortName\": \"HPA\", \"orderRank\": 3 }\n]"
+            },
+            "url": "{{baseUrl}}/api/v1/rto-services/order",
+            "description": "Update orderRank for multiple RTO services. Body: array of { serviceId, orderRank }; serviceName/shortName optional."
+          }
+        },
+        {
+          "name": "Get RTO Service By ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/rto-services/{{serviceId}}",
+            "description": "Get a single RTO service by ID. Set {{serviceId}} in collection variables (e.g. from Create response)."
+          }
+        },
+        {
+          "name": "Update RTO Service",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"serviceName\": \"Registration Transfer Updated\",\n  \"shortName\": \"REG-UPD\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/rto-services/{{serviceId}}",
+            "description": "Update an existing RTO service by ID."
+          }
+        },
+        {
+          "name": "Delete RTO Service",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/rto-services/{{serviceId}}",
+            "description": "Delete an RTO service by ID."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Upload categories",
+      "auth": {
+        "type": "bearer",
+        "bearer": [
+          {
+            "key": "token",
+            "value": "{{token}}",
+            "type": "string"
+          }
+        ]
+      },
+      "item": [
+        {
+          "name": "Create upload category",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const json = pm.response.json();",
+                  "  if (json.data && json.data.categoryId) {",
+                  "    pm.collectionVariables.set('uploadCategoryId', json.data.categoryId);",
+                  "  }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"categoryName\": \"RC Documents\",\n  \"bothSide\": false\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/upload-categories",
+            "description": "categoryName, bothSide required; orderRank is max+1 server-side."
+          }
+        },
+        {
+          "name": "List upload categories",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/upload-categories",
+            "description": "Full list (no pagination); sorted by orderRank."
+          }
+        },
+        {
+          "name": "Update upload category order",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "[\n  { \"categoryId\": \"{{uploadCategoryId}}\", \"categoryName\": \"RC Documents\", \"orderRank\": 1 }\n]"
+            },
+            "url": "{{baseUrl}}/api/v1/upload-categories/order",
+            "description": "Replace categoryIds with real UUIDs. categoryName optional (ignored)."
+          }
+        },
+        {
+          "name": "Get upload category by ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/upload-categories/{{uploadCategoryId}}",
+            "description": "Set uploadCategoryId (e.g. from Create)."
+          }
+        },
+        {
+          "name": "Update upload category",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"categoryName\": \"RC Documents Updated\",\n  \"bothSide\": true\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/upload-categories/{{uploadCategoryId}}",
+            "description": "categoryName, bothSide required."
+          }
+        },
+        {
+          "name": "Delete upload category",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/upload-categories/{{uploadCategoryId}}",
+            "description": "Delete by id."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Dealer-wise upload categories",
+      "auth": {
+        "type": "bearer",
+        "bearer": [
+          {
+            "key": "token",
+            "value": "{{token}}",
+            "type": "string"
+          }
+        ]
+      },
+      "item": [
+        {
+          "name": "Create dealer-wise upload category",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const json = pm.response.json();",
+                  "  if (json.data && json.data.dwucId) {",
+                  "    pm.collectionVariables.set('dwucId', json.data.dwucId);",
+                  "  }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"uploadCategoryId\": \"{{uploadCategoryId}}\",\n  \"processApi\": \"https://api.example.com/process\",\n  \"isRequired\": true,\n  \"isProcess\": false,\n  \"isViewInStep\": true\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/dealer-wise-upload-categories",
+            "description": "dealerId comes from JWT for normal users (optional dealerId in body for ADMIN only). uploadCategoryId unique per dealer. orderRank auto per dealer."
+          }
+        },
+        {
+          "name": "List by dealer",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/dealer-wise-upload-categories",
+            "description": "Uses dealerId from JWT (optional ?dealerId= for ADMIN). data: { dealerId, uploadCategory: [...] }."
+          }
+        },
+        {
+          "name": "List by dealer (view in step only)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/dealer-wise-upload-categories/view-in-step",
+            "description": "Same as List by dealer but isViewInStep true only; each item includes bothSide from master UploadCategory. dealerId from JWT (optional query for ADMIN)."
+          }
+        },
+        {
+          "name": "Update order ranks",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    { \"dwucId\": \"{{dwucId}}\", \"orderRank\": 1 }\n  ]\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/dealer-wise-upload-categories/order",
+            "description": "dealerId from JWT (optional in body for ADMIN). items[]. All dwucIds must belong to that dealer."
+          }
+        },
+        {
+          "name": "Get by dwucId",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/dealer-wise-upload-categories/{{dwucId}}",
+            "description": "Path id is dwucId (DealerWiseUploadCategory PK)."
+          }
+        },
+        {
+          "name": "Update dealer-wise link",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"uploadCategoryId\": \"{{uploadCategoryId}}\",\n  \"processApi\": \"\",\n  \"isRequired\": false,\n  \"isProcess\": true,\n  \"isViewInStep\": false\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/dealer-wise-upload-categories/{{dwucId}}",
+            "description": "Full body replace for mutable fields."
+          }
+        },
+        {
+          "name": "Delete dealer-wise link",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/dealer-wise-upload-categories/{{dwucId}}",
+            "description": "Delete by dwucId."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Dealer-wise users",
+      "auth": {
+        "type": "bearer",
+        "bearer": [
+          {
+            "key": "token",
+            "value": "{{token}}",
+            "type": "string"
+          }
+        ]
+      },
+      "item": [
+        {
+          "name": "Create dealer-wise user",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const json = pm.response.json();",
+                  "  if (json.data && json.data.dwuId) {",
+                  "    pm.collectionVariables.set('dealerWiseUserDwuId', json.data.dwuId);",
+                  "  }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{userId}}\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/dealer-wise-users",
+            "description": "Each userId can only be linked once (single dealer for that user)."
+          }
+        },
+        {
+          "name": "Create user + assign",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userName\": \"New Employee\",\n  \"emailId\": \"employee@example.com\",\n  \"mobileNo\": \"9876543210\",\n  \"password\": \"Passw0rd!\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/dealer-wise-users/with-user",
+            "description": "Creates a verified user (emailVerified=true) and links them to the dealer in one call. ADMIN must add \"dealerId\" to the body."
+          }
+        },
+        {
+          "name": "List by dealer",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/dealer-wise-users",
+            "description": "dealerId from JWT (optional ?dealerId= for ADMIN)."
+          }
+        },
+        {
+          "name": "Get by dwuId",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/dealer-wise-users/{{dealerWiseUserDwuId}}",
+            "description": "Path id is dwuId (DealerWiseUser PK)."
+          }
+        },
+        {
+          "name": "Update dealer-wise user",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{userId}}\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/dealer-wise-users/{{dealerWiseUserDwuId}}",
+            "description": "Replace userId; dealerId unchanged."
+          }
+        },
+        {
+          "name": "Delete dealer-wise user",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/dealer-wise-users/{{dealerWiseUserDwuId}}",
+            "description": "Delete by dwuId."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Dealers",
+      "auth": {
+        "type": "bearer",
+        "bearer": [
+          {
+            "key": "token",
+            "value": "{{token}}",
+            "type": "string"
+          }
+        ]
+      },
+      "item": [
+        {
+          "name": "Create Dealer",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"firmName\": \"ABC Motors\", \"dealerName\": \"John Dealer\", \"address\": \"123 Main St\", \"city\": \"Mumbai\", \"state\": \"Maharashtra\", \"pincode\": \"400001\", \"mobileNo\": \"9876543210\", \"emailId\": \"dealer@example.com\", \"displayName\": \"ABC Motors\", \"whatsappNo\": \"9876543210\", \"isSubscribe\": false\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/dealers",
+            "description": "Create a new dealer. emailId and whatsappNo must be unique."
+          }
+        },
+        {
+          "name": "List Dealers",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/dealers?page=1&limit=10",
+            "description": "List dealers (paginated)."
+          }
+        },
+        {
+          "name": "Get Dealer By ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/dealers/{{dealerId}}",
+            "description": "Get a single dealer by ID."
+          }
+        },
+        {
+          "name": "Update Dealer",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"firmName\": \"ABC Motors\", \"dealerName\": \"John Dealer\", \"address\": \"123 Main St\", \"city\": \"Mumbai\", \"state\": \"Maharashtra\", \"pincode\": \"400001\", \"mobileNo\": \"9876543210\", \"emailId\": \"dealer@example.com\", \"displayName\": \"ABC Motors\", \"whatsappNo\": \"9876543210\", \"isSubscribe\": true\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/dealers/{{dealerId}}",
+            "description": "Update an existing dealer. All fields required."
+          }
+        },
+        {
+          "name": "Delete Dealer",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/dealers/{{dealerId}}",
+            "description": "Delete a dealer by ID."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Dealer Statuses",
+      "auth": {
+        "type": "bearer",
+        "bearer": [
+          {
+            "key": "token",
+            "value": "{{token}}",
+            "type": "string"
+          }
+        ]
+      },
+      "item": [
+        {
+          "name": "Sync Dealer Statuses",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"statusData\": [\n    { \"statusId\": \"{{statusId}}\", \"statusName\": \"TO-DO\", \"colour\": \"blue\" },\n    { \"statusName\": \"Pending\", \"colour\": \"Red\" }\n  ]\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/dealer-statuses",
+            "description": "Sync statuses for the JWT dealer (optional dealerId in body for ADMIN only)."
+          }
+        },
+        {
+          "name": "Update Dealer Status Order",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    { \"statusId\": \"{{statusId}}\", \"statusRank\": 1 },\n    { \"statusId\": \"<another-status-id>\", \"statusRank\": 2 }\n  ]\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/dealer-statuses/order",
+            "description": "Reorder statuses for JWT dealer (optional dealerId for ADMIN). Body: { items: [{ statusId, statusRank }] }."
+          }
+        },
+        {
+          "name": "List Dealer Statuses (JWT dealer)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/dealer-statuses",
+            "description": "GET /dealer-statuses \u2014 statuses for the dealer in the access token, ordered by statusRank."
+          }
+        },
+        {
+          "name": "Get Dealer Statuses By Dealer",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/dealer-statuses/{{dealerId}}",
+            "description": "Path dealerId must match JWT for non-ADMIN (ADMIN may use any dealer)."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Dealer References",
+      "auth": {
+        "type": "bearer",
+        "bearer": [
+          {
+            "key": "token",
+            "value": "{{token}}",
+            "type": "string"
+          }
+        ]
+      },
+      "item": [
+        {
+          "name": "Create Dealer Reference",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"referenceName\": \"John Doe\",\n  \"referenceNumber\": \"+911234567890\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/dealer-references",
+            "description": "JWT dealer (optional dealerId for ADMIN). referenceName and referenceNumber unique per dealer."
+          }
+        },
+        {
+          "name": "List Dealer References (DDL)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/dealer-references/ddl",
+            "description": "All references for JWT dealer, no pagination (dropdown). Optional ?dealerId= for ADMIN."
+          }
+        },
+        {
+          "name": "List Dealer References",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/dealer-references?page=1&limit=10",
+            "description": "Paginated list for JWT dealer (optional &dealerId= for ADMIN)."
+          }
+        },
+        {
+          "name": "Get Dealer Reference By ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/dealer-references/{{referenceId}}",
+            "description": "Get a single dealer reference by ID."
+          }
+        },
+        {
+          "name": "Update Dealer Reference",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"referenceName\": \"John Smith\",\n  \"referenceNumber\": \"+911234567891\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/dealer-references/{{referenceId}}",
+            "description": "Update an existing dealer reference. referenceName and referenceNumber must remain unique per dealer."
+          }
+        },
+        {
+          "name": "Delete Dealer Reference",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/dealer-references/{{referenceId}}",
+            "description": "Delete a dealer reference by ID."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Vehicles",
+      "auth": {
+        "type": "bearer",
+        "bearer": [
+          {
+            "key": "token",
+            "value": "{{token}}",
+            "type": "string"
+          }
+        ]
+      },
+      "item": [
+        {
+          "name": "Create Vehicle",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"registrationNumber\": \"MH01AB1234\",\n  \"chassisNumber\": \"CHASSIS1234567890\",\n  \"engineNumber\": \"ENGINE1234567890\",\n  \"vehicleType\": \"CAR\",\n  \"make\": \"Maruti\",\n  \"model\": \"Swift\",\n  \"registrationDate\": \"2026-03-15\",\n  \"manufactureMonth\": 3,\n  \"manufactureYear\": 2024\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/vehicles",
+            "description": "Create vehicle. registrationNumber required & unique. chassisNumber/engineNumber unique when set; other fields optional null."
+          }
+        },
+        {
+          "name": "List Vehicles",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/vehicles?page=1&limit=10",
+            "description": "List vehicles (paginated)."
+          }
+        },
+        {
+          "name": "Get Vehicle By ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/vehicles/{{vehicleId}}",
+            "description": "Get a single vehicle by ID."
+          }
+        },
+        {
+          "name": "Get Vehicle History",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/vehicles/history?registrationNumber=GJ03BR9195",
+            "description": "Per-vehicle buy/sell history for the caller's own dealership + an anonymized cross-dealer 'changed hands' signal. Dealer-scoped (super-admin/agent without a dealer -> 4033). 404 (4047) when the dealer has never handled the vehicle (not an existence oracle). registrationNumber is normalized server-side (case/spaces ignored)."
+          }
+        },
+        {
+          "name": "Update Vehicle",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"registrationNumber\": \"MH01AB1234\",\n  \"chassisNumber\": \"CHASSIS1234567890\",\n  \"engineNumber\": \"ENGINE1234567890\",\n  \"vehicleType\": \"CAR\",\n  \"make\": \"Maruti\",\n  \"model\": \"Swift Updated\",\n  \"registrationDate\": \"2026-03-15\",\n  \"manufactureMonth\": 3,\n  \"manufactureYear\": 2024\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/vehicles/{{vehicleId}}",
+            "description": "Update vehicle. Same nullable rules as create."
+          }
+        },
+        {
+          "name": "Delete Vehicle",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/vehicles/{{vehicleId}}",
+            "description": "Delete a vehicle by ID."
+          }
+        }
+      ]
+    },
+    {
+      "name": "States",
+      "auth": {
+        "type": "bearer",
+        "bearer": [
+          {
+            "key": "token",
+            "value": "{{token}}",
+            "type": "string"
+          }
+        ]
+      },
+      "item": [
+        {
+          "name": "Create State",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"stateName\": \"Maharashtra\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/states",
+            "description": "Create a new state. stateName is unique."
+          }
+        },
+        {
+          "name": "List States",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/states?page=1&limit=50",
+            "description": "List states (paginated)."
+          }
+        },
+        {
+          "name": "States DDL (All)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/states/ddl",
+            "description": "List all states for dropdown (no pagination)."
+          }
+        },
+        {
+          "name": "Get State By ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/states/{{stateId}}",
+            "description": "Get a single state by ID."
+          }
+        },
+        {
+          "name": "Update State",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"stateName\": \"Maharashtra Updated\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/states/{{stateId}}",
+            "description": "Update an existing state."
+          }
+        },
+        {
+          "name": "Delete State",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/states/{{stateId}}",
+            "description": "Delete a state by ID."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Cities",
+      "auth": {
+        "type": "bearer",
+        "bearer": [
+          {
+            "key": "token",
+            "value": "{{token}}",
+            "type": "string"
+          }
+        ]
+      },
+      "item": [
+        {
+          "name": "Create City",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"stateId\": \"{{stateId}}\",\n  \"cityName\": \"Mumbai\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/cities",
+            "description": "Create a new city for a state. cityName is unique per state."
+          }
+        },
+        {
+          "name": "List Cities",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/cities?page=1&limit=50&stateId={{stateId}}",
+            "description": "List cities (paginated). Optionally filter by stateId."
+          }
+        },
+        {
+          "name": "Cities DDL (By State)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/cities/ddl/{{stateId}}",
+            "description": "List all cities for dropdown for a specific state (no pagination)."
+          }
+        },
+        {
+          "name": "Get City By ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/cities/{{cityId}}",
+            "description": "Get a single city by ID."
+          }
+        },
+        {
+          "name": "Update City",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cityName\": \"Mumbai Updated\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/cities/{{cityId}}",
+            "description": "Update an existing city."
+          }
+        },
+        {
+          "name": "Delete City",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/cities/{{cityId}}",
+            "description": "Delete a city by ID."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Vehicle Processes",
+      "auth": {
+        "type": "bearer",
+        "bearer": [
+          {
+            "key": "token",
+            "value": "{{token}}",
+            "type": "string"
+          }
+        ]
+      },
+      "item": [
+        {
+          "name": "Start vehicle process (upsert vehicle + Pending)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const json = pm.response.json();",
+                  "  if (json.data && json.data.process && json.data.process.processId) {",
+                  "    pm.collectionVariables.set('processId', json.data.process.processId);",
+                  "  }",
+                  "  if (json.data && json.data.vehicle && json.data.vehicle.vehicleId) {",
+                  "    pm.collectionVariables.set('vehicleId', json.data.vehicle.vehicleId);",
+                  "  }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"registrationNumber\": \"MH12AB1234\",\n  \"chassisNumber\": null,\n  \"engineNumber\": null,\n  \"vehicleType\": \"Car\",\n  \"make\": \"Maruti\",\n  \"model\": \"Swift\",\n  \"registrationDate\": \"2020-01-15\",\n  \"manufactureMonth\": 6,\n  \"manufactureYear\": 2019,\n  \"processDate\": \"2026-04-05T12:00:00.000Z\",\n  \"persons\": [\n    {\n      \"personName\": \"John Seller\",\n      \"address\": null,\n      \"mobileNumber\": \"+919999999999\",\n      \"personType\": \"SELLER\"\n    },\n    {\n      \"personName\": \"Jane Buyer\",\n      \"address\": null,\n      \"mobileNumber\": \"+918888888888\",\n      \"personType\": \"BUYER\"\n    }\n  ],\n  \"uploadPhotos\": [\n    {\n      \"category\": \"RC Front\",\n      \"imageName\": \"rc-front.png\"\n    },\n    {\n      \"category\": \"RC Back\",\n      \"imageName\": \"rc-back.png\"\n    }\n  ],\n  \"processReferences\": [\n    {\n      \"referenceId\": \"{{referenceId}}\",\n      \"referenceType\": \"SELL\"\n    }\n  ]\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/vehicle-processes/start",
+            "description": "One-shot start: upsert vehicle, create Pending process, optional persons[], uploadPhotos[] (category+imageName), processReferences[] (referenceId+referenceType BUY|SELL). dealerId from JWT."
+          }
+        },
+        {
+          "name": "Create Vehicle Process (Merged)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"vehicleId\": \"{{vehicleId}}\",\n  \"status\": \"TO-DO\",\n  \"processDate\": \"2026-03-15T10:30:00.000Z\",\n  \"persons\": [\n    {\n      \"personName\": \"John Seller\",\n      \"address\": null,\n      \"mobileNumber\": \"+919999999999\",\n      \"personType\": \"SELLER\"\n    },\n    {\n      \"personName\": \"Jane Buyer\",\n      \"address\": \"Somewhere, City\",\n      \"mobileNumber\": \"+918888888888\",\n      \"personType\": \"BUYER\"\n    }\n  ]\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/vehicle-processes",
+            "description": "Create a vehicle process and its persons in one request."
+          }
+        },
+        {
+          "name": "List Vehicle Processes",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/vehicle-processes?page=1&limit=50",
+            "description": "List vehicle processes (paginated). Each item includes persons."
+          }
+        },
+        {
+          "name": "Get Vehicle Process By ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/vehicle-processes/{{processId}}",
+            "description": "Get a vehicle process by ID (includes persons)."
+          }
+        },
+        {
+          "name": "Get Vehicle Process Details",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/vehicle-processes/{{processId}}/details",
+            "description": "One response: vehicle, owner (seller), buyer, references (SELL/BUY), photos with photoUrl."
+          }
+        },
+        {
+          "name": "Update Vehicle Process (Merged)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"vehicleId\": \"{{vehicleId}}\",\n  \"status\": \"In Progress\",\n  \"processDate\": \"2026-03-16T10:30:00.000Z\",\n  \"persons\": [\n    {\n      \"personName\": \"John Seller\",\n      \"address\": null,\n      \"mobileNumber\": \"+919999999999\",\n      \"personType\": \"SELLER\"\n    }\n  ]\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/vehicle-processes/{{processId}}",
+            "description": "Update a vehicle process and replace its persons in one request."
+          }
+        },
+        {
+          "name": "Delete Vehicle Process",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/vehicle-processes/{{processId}}",
+            "description": "Delete a vehicle process by ID (persons are deleted via cascade)."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Persons",
+      "auth": {
+        "type": "bearer",
+        "bearer": [
+          {
+            "key": "token",
+            "value": "{{token}}",
+            "type": "string"
+          }
+        ]
+      },
+      "item": [
+        {
+          "name": "Create Person",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const json = pm.response.json();",
+                  "  if (json.data && json.data.personId) pm.collectionVariables.set('personId', json.data.personId);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"processId\": \"{{processId}}\",\n  \"personName\": \"Jane Buyer\",\n  \"address\": null,\n  \"mobileNumber\": \"+918888888888\",\n  \"personType\": \"BUYER\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/persons",
+            "description": "Add a person to a vehicle process. dealerId from JWT; optional body dealerId for ADMIN. processId must belong to that dealer."
+          }
+        },
+        {
+          "name": "List Persons By Process",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/persons?processId={{processId}}",
+            "description": "List persons for processId (dealer-scoped). Optional &dealerId= for ADMIN."
+          }
+        },
+        {
+          "name": "Get Person By ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/persons/{{personId}}",
+            "description": "Get one person. Optional ?dealerId= for ADMIN."
+          }
+        },
+        {
+          "name": "Update Person",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"personName\": \"Jane Buyer Updated\",\n  \"address\": \"City\",\n  \"mobileNumber\": \"+918888888888\",\n  \"personType\": \"BUYER\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/persons/{{personId}}",
+            "description": "Full replace of mutable fields. Optional ?dealerId= for ADMIN."
+          }
+        },
+        {
+          "name": "Delete Person",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/persons/{{personId}}",
+            "description": "Delete a person row. Optional ?dealerId= for ADMIN."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Process upload photos",
+      "auth": {
+        "type": "bearer",
+        "bearer": [
+          {
+            "key": "token",
+            "value": "{{token}}",
+            "type": "string"
+          }
+        ]
+      },
+      "item": [
+        {
+          "name": "Create process upload photo",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const json = pm.response.json();",
+                  "  if (json.data && json.data.processUploadPhotoId) {",
+                  "    pm.collectionVariables.set('processUploadPhotoId', json.data.processUploadPhotoId);",
+                  "  }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"processId\": \"{{processId}}\",\n  \"category\": \"RC\",\n  \"imageName\": \"rc_front.jpg\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/process-upload-photos",
+            "description": "Single row: processId, category, imageName. dealerId from JWT."
+          }
+        },
+        {
+          "name": "Bulk create process upload photos",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    {\n      \"processId\": \"{{processId}}\",\n      \"category\": \"Insurance\",\n      \"imageName\": \"policy.pdf\"\n    },\n    {\n      \"processId\": \"{{processId}}\",\n      \"category\": \"RC\",\n      \"imageName\": \"rc_back.jpg\"\n    }\n  ]\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/process-upload-photos/bulk",
+            "description": "Non-empty items[]. Each processId must belong to JWT dealer. Response data.items."
+          }
+        },
+        {
+          "name": "List by process",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/process-upload-photos?processId={{processId}}",
+            "description": "List photos for a vehicle process."
+          }
+        },
+        {
+          "name": "Get by id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/process-upload-photos/{{processUploadPhotoId}}",
+            "description": "Get one row by processUploadPhotoId."
+          }
+        },
+        {
+          "name": "Update process upload photo",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"category\": \"RC\",\n  \"imageName\": \"rc_front_v2.jpg\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/process-upload-photos/{{processUploadPhotoId}}",
+            "description": "Replace category and imageName."
+          }
+        },
+        {
+          "name": "Delete process upload photo",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/process-upload-photos/{{processUploadPhotoId}}",
+            "description": "Delete one row."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Process tasks",
+      "auth": {
+        "type": "bearer",
+        "bearer": [
+          {
+            "key": "token",
+            "value": "{{token}}",
+            "type": "string"
+          }
+        ]
+      },
+      "item": [
+        {
+          "name": "Create process task",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const json = pm.response.json();",
+                  "  if (json.data && json.data.processTaskId) {",
+                  "    pm.collectionVariables.set('processTaskId', json.data.processTaskId);",
+                  "  }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"processId\": \"{{processId}}\",\n  \"taskName\": \"Submit RC copy\",\n  \"taskDate\": \"2026-04-10T09:00:00.000Z\",\n  \"assignUserId\": \"{{userId}}\",\n  \"status\": \"To-Do\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/process-tasks",
+            "description": "taskName + taskDate required. assignUserId optional (omit or null for unassigned). status optional (max 50; defaults to To-Do)."
+          }
+        },
+        {
+          "name": "List process tasks",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/process-tasks?processId={{processId}}",
+            "description": "List tasks for a vehicle process."
+          }
+        },
+        {
+          "name": "Get process task by id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/process-tasks/{{processTaskId}}",
+            "description": "Get one task by processTaskId."
+          }
+        },
+        {
+          "name": "Update process task",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"taskName\": \"Submit RC copy (done)\",\n  \"taskDate\": \"2026-04-11T10:00:00.000Z\",\n  \"assignUserId\": null,\n  \"status\": \"Done\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/process-tasks/{{processTaskId}}",
+            "description": "Replace taskName, taskDate, assignUserId (null clears assignee), status (optional, max 50)."
+          }
+        },
+        {
+          "name": "Delete process task",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/process-tasks/{{processTaskId}}",
+            "description": "Delete a task row."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Process Expenses",
+      "item": [
+        {
+          "name": "List Process Expenses",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/process-expenses?processId={{processId}}",
+            "description": "Expenses for one process (dealer-scoped, oldest first)."
+          }
+        },
+        {
+          "name": "Create Process Expense",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"processId\": \"{{processId}}\",\n  \"label\": \"RTO name-transfer fee\",\n  \"amount\": 3000,\n  \"category\": \"Registration\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/process-expenses",
+            "description": "Book an expense against a process the caller owns. amount: positive, <=2 decimals. category optional."
+          }
+        },
+        {
+          "name": "Get Process Expense By ID",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/process-expenses/{{expenseId}}",
+            "description": "A single expense the caller owns. 4060 when not found."
+          }
+        },
+        {
+          "name": "Update Process Expense",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"label\": \"RTO name-transfer fee\",\n  \"amount\": 3200,\n  \"category\": \"Registration\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/process-expenses/{{expenseId}}",
+            "description": "Update label / amount / category."
+          }
+        },
+        {
+          "name": "Delete Process Expense",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/process-expenses/{{expenseId}}",
+            "description": "Delete an expense."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Roles",
+      "auth": {
+        "type": "bearer",
+        "bearer": [
+          {
+            "key": "token",
+            "value": "{{token}}",
+            "type": "string"
+          }
+        ]
+      },
+      "item": [
+        {
+          "name": "Create Role",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"roleName\": \"Sales Manager\",\n  \"roleType\": \"DEALER\",\n  \"typeId\": \"{{dealerId}}\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/roles",
+            "description": "Create a role. roleName must be unique per typeId."
+          }
+        },
+        {
+          "name": "List Roles",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/roles?typeId={{dealerId}}&page=1&limit=20",
+            "description": "List roles for a tenant (typeId required). Optional roleType=DEALER|AGENT."
+          }
+        },
+        {
+          "name": "Get Role By ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/roles/{{roleId}}",
+            "description": "Get a role by roleId."
+          }
+        },
+        {
+          "name": "Update Role",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"roleName\": \"Sales Manager\",\n  \"roleType\": \"DEALER\",\n  \"typeId\": \"{{dealerId}}\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/roles/{{roleId}}",
+            "description": "Update role (all body fields required)."
+          }
+        },
+        {
+          "name": "Delete Role",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/roles/{{roleId}}",
+            "description": "Delete a role by id."
+          }
+        }
+      ]
+    },
+    {
+      "name": "RBAC Navigation",
+      "item": [
+        {
+          "name": "Get Catalog",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/rbac/catalog?moduleType=DEALER",
+            "description": "Modules with nested pages and actions for DEALER or AGENT."
+          }
+        },
+        {
+          "name": "Sync Modules",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"moduleType\": \"DEALER\",\n  \"modules\": [\n    {\n      \"moduleName\": \"Vehicles\",\n      \"description\": \"Vehicle management\"\n    }\n  ]\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/rbac/modules/sync",
+            "description": "Full replace for moduleType: create/update by moduleId; omit id to create; missing rows deleted."
+          }
+        },
+        {
+          "name": "Sync Pages",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"moduleId\": \"{{moduleId}}\",\n  \"pages\": [\n    {\n      \"pageName\": \"List\",\n      \"slug\": \"list\",\n      \"description\": \"Vehicle list\"\n    }\n  ]\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/rbac/pages/sync",
+            "description": "Full replace under moduleId; set collection variable moduleId from catalog."
+          }
+        },
+        {
+          "name": "Sync Page Actions",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"pageId\": \"{{pageId}}\",\n  \"actions\": [\n    {\n      \"actionName\": \"VIEW\",\n      \"label\": \"View\"\n    },\n    {\n      \"actionName\": \"CREATE\",\n      \"label\": \"Create\"\n    }\n  ]\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/rbac/page-actions/sync",
+            "description": "Full replace under pageId; set pageId from catalog."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Agents",
+      "auth": {
+        "type": "bearer",
+        "bearer": [
+          {
+            "key": "token",
+            "value": "{{token}}",
+            "type": "string"
+          }
+        ]
+      },
+      "item": [
+        {
+          "name": "Create Agent",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const json = pm.response.json();",
+                  "  if (json.data && json.data.agentId) {",
+                  "    pm.collectionVariables.set('agentId', json.data.agentId);",
+                  "  }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"firmName\": \"Speedy RTO Services\",\n  \"agentName\": \"Ramesh Agent\",\n  \"displayName\": \"Speedy RTO\",\n  \"city\": \"Pune\",\n  \"state\": \"Maharashtra\",\n  \"mobileNo\": \"9876500000\",\n  \"emailId\": \"agent@example.com\",\n  \"whatsappNo\": \"9876500000\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/agents",
+            "description": "Dealer/admin-facing. firmName, agentName, displayName required; contact fields optional and unique when set."
+          }
+        },
+        {
+          "name": "Create Agent + User",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"agentId\": \"{{agentId}}\",\n  \"userName\": \"Agent Owner\",\n  \"emailId\": \"owner@agent.example.com\",\n  \"mobileNo\": \"9876511111\",\n  \"password\": \"Passw0rd!\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/agents/with-user",
+            "description": "Creates a verified user (emailVerified=true) and links them to the agent in one call."
+          }
+        },
+        {
+          "name": "List Agents",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/agents?page=1&limit=10",
+            "description": "List agents (paginated)."
+          }
+        },
+        {
+          "name": "Get Agent By ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/agents/{{agentId}}",
+            "description": "Get a single agent by agentId."
+          }
+        },
+        {
+          "name": "Update Agent",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"firmName\": \"Speedy RTO Services\",\n  \"agentName\": \"Ramesh Agent\",\n  \"displayName\": \"Speedy RTO\",\n  \"city\": \"Pune\",\n  \"state\": \"Maharashtra\",\n  \"mobileNo\": \"9876500000\",\n  \"emailId\": \"agent@example.com\",\n  \"whatsappNo\": \"9876500000\",\n  \"isSubscribe\": true\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/agents/{{agentId}}",
+            "description": "isSubscribe is required on update."
+          }
+        },
+        {
+          "name": "Delete Agent",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/agents/{{agentId}}",
+            "description": "Delete an agent by agentId."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Agent users",
+      "auth": {
+        "type": "bearer",
+        "bearer": [
+          {
+            "key": "token",
+            "value": "{{token}}",
+            "type": "string"
+          }
+        ]
+      },
+      "item": [
+        {
+          "name": "Create agent user",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const json = pm.response.json();",
+                  "  if (json.data && json.data.awuId) {",
+                  "    pm.collectionVariables.set('awuId', json.data.awuId);",
+                  "  }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{userId}}\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/agent-wise-users",
+            "description": "Agent-scoped. agentId from JWT (ADMIN must add agentId). Each userId links to one agent only; a dealer-linked user is rejected (4097)."
+          }
+        },
+        {
+          "name": "Create user + assign",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userName\": \"Agent Staff\",\n  \"emailId\": \"staff@agent.example.com\",\n  \"mobileNo\": \"9876522222\",\n  \"password\": \"Passw0rd!\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/agent-wise-users/with-user",
+            "description": "Creates a verified user and links them to the agent. agentId from JWT (ADMIN must add agentId)."
+          }
+        },
+        {
+          "name": "List agent users",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/agent-wise-users",
+            "description": "agentId from JWT (optional ?agentId= for ADMIN)."
+          }
+        },
+        {
+          "name": "Get by awuId",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/agent-wise-users/{{awuId}}",
+            "description": "Path id is awuId. Must belong to the caller's agent."
+          }
+        },
+        {
+          "name": "Update agent user",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{userId}}\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/agent-wise-users/{{awuId}}",
+            "description": "Replace userId; agentId unchanged."
+          }
+        },
+        {
+          "name": "Delete agent user",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/agent-wise-users/{{awuId}}",
+            "description": "Delete by awuId."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Agent Statuses",
+      "auth": {
+        "type": "bearer",
+        "bearer": [
+          {
+            "key": "token",
+            "value": "{{token}}",
+            "type": "string"
+          }
+        ]
+      },
+      "item": [
+        {
+          "name": "Sync Agent Statuses",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"statusData\": [\n    { \"statusName\": \"To-Do\", \"colour\": \"blue\" },\n    { \"statusName\": \"In Progress\", \"colour\": \"yellow\" },\n    { \"statusName\": \"Done\", \"colour\": \"green\" }\n  ]\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/agent-statuses",
+            "description": "Agent-scoped sync (create/update/delete/reorder). agentId from JWT (ADMIN must add agentId). Array order sets statusRank."
+          }
+        },
+        {
+          "name": "Update Agent Status Order",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    { \"statusId\": \"{{agentStatusId}}\", \"statusRank\": 1 }\n  ]\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/agent-statuses/order",
+            "description": "Reorder only. All statusIds must belong to the agent."
+          }
+        },
+        {
+          "name": "List Agent Statuses (JWT agent)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/agent-statuses",
+            "description": "Statuses for the agent in the JWT (non-admin)."
+          }
+        },
+        {
+          "name": "Get Agent Statuses By Agent",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/agent-statuses/{{agentId}}",
+            "description": "Path agentId must match the JWT agent for non-admin."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Dealer-Agent Grants",
+      "auth": {
+        "type": "bearer",
+        "bearer": [
+          {
+            "key": "token",
+            "value": "{{token}}",
+            "type": "string"
+          }
+        ]
+      },
+      "item": [
+        {
+          "name": "Grant Agent Access",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const json = pm.response.json();",
+                  "  if (json.data && json.data.grant && json.data.grant.dealerAgentId) {",
+                  "    pm.collectionVariables.set('dealerAgentId', json.data.grant.dealerAgentId);",
+                  "  }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"agentId\": \"{{agentId}}\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/dealer-agents",
+            "description": "Dealer-scoped. Grants ACTIVE DEALER_GRANT access. Returns { grant, capInfo }; never blocked over cap."
+          }
+        },
+        {
+          "name": "List Dealer Agent Grants",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/dealer-agents",
+            "description": "Dealer's ACTIVE grants (each with agent summary) + capInfo. Returns { items, capInfo }."
+          }
+        },
+        {
+          "name": "Revoke Agent Grant",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/dealer-agents/{{dealerAgentId}}",
+            "description": "Sets status REVOKED. Must belong to the calling dealer."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Process Assignments",
+      "auth": {
+        "type": "bearer",
+        "bearer": [
+          {
+            "key": "token",
+            "value": "{{token}}",
+            "type": "string"
+          }
+        ]
+      },
+      "item": [
+        {
+          "name": "Create Assignment",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const json = pm.response.json();",
+                  "  if (json.data && json.data.assignmentId) {",
+                  "    pm.collectionVariables.set('assignmentId', json.data.assignmentId);",
+                  "  }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"processId\": \"{{processId}}\",\n  \"agentId\": \"{{agentId}}\",\n  \"serviceId\": \"{{serviceId}}\",\n  \"note\": \"Please complete name transfer.\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/process-assignments",
+            "description": "Dealer-scoped. Process must be owned by the dealer; the dealer must hold a live grant for the agent (else 4228)."
+          }
+        },
+        {
+          "name": "List Assignments By Process",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/process-assignments?processId={{processId}}",
+            "description": "Dealer-scoped. Non-cancelled assignments for a vehicle process (oldest first)."
+          }
+        },
+        {
+          "name": "Cancel Assignment",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/process-assignments/{{assignmentId}}",
+            "description": "Dealer-scoped. Sets status CANCELLED. Must belong to the calling dealer."
+          }
+        },
+        {
+          "name": "List Agent Assignments",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/process-assignments/agent",
+            "description": "Agent-scoped. Caller agent's non-cancelled assignments (newest first). Optional ?dealerId= to filter by source dealer."
+          }
+        },
+        {
+          "name": "Get Assignment Details (agent)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/process-assignments/{{assignmentId}}/details",
+            "description": "Agent-scoped. Returns { assignment, process (full detail), dealer }. Must belong to the caller agent."
+          }
+        },
+        {
+          "name": "Update Assignment Agent Status",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"agentStatusId\": \"{{agentStatusId}}\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/process-assignments/{{assignmentId}}/agent-status",
+            "description": "Agent-scoped. Moves the assignment into one of the agent's own statuses (status must belong to the agent, else 4229)."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Placeholder Dealers",
+      "auth": {
+        "type": "bearer",
+        "bearer": [
+          {
+            "key": "token",
+            "value": "{{token}}",
+            "type": "string"
+          }
+        ]
+      },
+      "item": [
+        {
+          "name": "Create Placeholder Dealer",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const json = pm.response.json();",
+                  "  if (json.data && json.data.dealerId) {",
+                  "    pm.collectionVariables.set('placeholderDealerId', json.data.dealerId);",
+                  "  }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"firmName\": \"Walk-in Dealer A\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/placeholder-dealers",
+            "description": "Agent-scoped. Name-only dealer owned by the agent. dealerName/displayName default to firmName."
+          }
+        },
+        {
+          "name": "List Placeholder Dealers",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/placeholder-dealers",
+            "description": "Agent-scoped. All placeholders owned by the calling agent (with connectedDealer summary)."
+          }
+        },
+        {
+          "name": "Update Placeholder Dealer",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"firmName\": \"Walk-in Dealer A (renamed)\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/placeholder-dealers/{{placeholderDealerId}}",
+            "description": "Update name fields. All body fields optional."
+          }
+        },
+        {
+          "name": "Delete Placeholder Dealer",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/placeholder-dealers/{{placeholderDealerId}}",
+            "description": "Blocked (4093) when the placeholder has vehicle processes."
+          }
+        },
+        {
+          "name": "Connect Placeholder Dealer",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"realDealerId\": \"{{realDealerId}}\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/placeholder-dealers/{{placeholderDealerId}}/connect",
+            "description": "Connect to a real subscribed dealer (creates/reactivates a CONNECT grant). 4098 if target is not a subscribed real dealer."
+          }
+        },
+        {
+          "name": "Disconnect Placeholder Dealer",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/placeholder-dealers/{{placeholderDealerId}}/disconnect",
+            "description": "Clears connectedDealerId and revokes the CONNECT grant when present."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Khata / Ledger",
+      "auth": {
+        "type": "bearer",
+        "bearer": [
+          {
+            "key": "token",
+            "value": "{{token}}",
+            "type": "string"
+          }
+        ]
+      },
+      "item": [
+        {
+          "name": "List khata accounts",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/khata/accounts?page=1&limit=10",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "khata",
+                "accounts"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "10"
+                }
+              ]
+            },
+            "description": "Dual-persona: persona read from the token (agent token -> agent side, dealer token -> dealer side). Lists the caller's khata accounts (dealer -> one per agent; agent -> one per dealer), newest-updated first. Each account has a signed dealer-perspective balance (balance > 0 => dealer owes agent) plus a counterparty summary. 4059 if the token is not a dealer/agent account."
+          }
+        },
+        {
+          "name": "Get khata statement",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/khata/accounts/{{counterpartyId}}/statement?page=1&limit=10",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "khata",
+                "accounts",
+                "{{counterpartyId}}",
+                "statement"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "10"
+                }
+              ]
+            },
+            "description": "Running-balance statement for one dealer<->agent pair. counterpartyId is the agent id (dealer caller) or the dealer id (agent caller). data = { account|null, entries (newest first by seq), meta }. Reads do NOT require an active grant. 4220 if counterpartyId is not a UUID."
+          }
+        },
+        {
+          "name": "Post ledger entry",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const json = pm.response.json();",
+                  "  if (json.data && json.data.entry && json.data.entry.ledgerEntryId) {",
+                  "    pm.collectionVariables.set('ledgerEntryId', json.data.entry.ledgerEntryId);",
+                  "  }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"counterpartyId\": \"{{counterpartyId}}\",\n  \"direction\": \"CREDIT\",\n  \"amount\": 4500,\n  \"description\": \"RTO charges for MH12AB1234\",\n  \"assignmentId\": \"{{assignmentId}}\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/khata/entries",
+            "description": "Post a credit/debit entry to the pair (caller + counterparty). Sign convention (dealer-perspective): CREDIT raises what the dealer owes the agent (+amount), DEBIT lowers it. direction is CREDIT|DEBIT; amount > 0, <= 2 decimal places. description and assignmentId optional. Requires an ACTIVE dealer<->agent grant (else 4054); an agent's placeholder dealer must be connected first (else 4057). Captures ledgerEntryId from the response."
+          }
+        },
+        {
+          "name": "Reverse ledger entry",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/khata/entries/{{ledgerEntryId}}/reverse",
+            "description": "Reverse an entry the caller is a party to: posts an opposite-direction counter-entry (originals are never hard-deleted) and stamps the original isReversed: true. data.entry is the reversal (reversesEntryId set). 4037 not a party, 4055 already reversed, 4056 cannot reverse a reversal, 4054 no active grant."
+          }
+        },
+        {
+          "name": "Settle khata account",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 500\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/khata/accounts/{{counterpartyId}}/settle",
+            "description": "Post a balancing entry that drives the pair's balance toward zero. Send amount for a partial settle (capped at the outstanding balance); omit amount (send {} or no body) for a full settle. Requires an ACTIVE grant (4054). 4058 if already settled (balance is zero)."
+          }
+        }
+      ]
+    },
+    {
+      "name": "AI",
+      "item": [
+        {
+          "name": "Analyze Image",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "image",
+                  "type": "file",
+                  "src": ""
+                }
+              ]
+            },
+            "url": "{{baseUrl}}/api/v1/ai/analyze-image",
+            "description": "Upload a single image and extract readable text as strict JSON using Gemini."
+          }
+        },
+        {
+          "name": "Analyze ID proof",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "image",
+                  "type": "file",
+                  "src": ""
+                }
+              ]
+            },
+            "url": "{{baseUrl}}/api/v1/ai/analyze-id-proof",
+            "description": "Upload a single ID proof image (Aadhaar, PAN, DL, etc.). Returns fullName, address, city, state, pincode."
+          }
+        }
+      ]
+    }
+  ]
+}

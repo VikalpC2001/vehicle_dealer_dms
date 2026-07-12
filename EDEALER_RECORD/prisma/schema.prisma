@@ -1,0 +1,761 @@
+// This is your Prisma schema file.
+// Learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// ENUM TYPES
+// ---------------------------------------------------------------------------
+
+enum PersonType {
+  SELLER
+  BUYER
+}
+
+enum ReferenceType {
+  BUY
+  SELL
+}
+
+/// Dealer vs agent app surface; also scopes roles and modules.
+enum RoleType {
+  DEALER
+  AGENT
+}
+
+/// Email OTP purposes (signup verification vs password reset).
+enum OtpPurpose {
+  SIGNUP_EMAIL_VERIFICATION
+  PASSWORD_RESET
+}
+
+/// Dealer↔agent grant lifecycle.
+enum DealerAgentStatus {
+  ACTIVE
+  REVOKED
+}
+
+/// How a dealer↔agent grant originated. Only DEALER_GRANT counts against a dealer's agent cap;
+/// CONNECT grants (placeholder→real dealer) are excluded from the cap.
+enum DealerAgentSource {
+  DEALER_GRANT
+  CONNECT
+}
+
+/// Process→agent assignment lifecycle (coarse).
+enum AssignmentStatus {
+  OPEN
+  COMPLETED
+  CANCELLED
+}
+
+/// Khata ledger entry direction, stored from the DEALER perspective:
+/// CREDIT raises what the dealer owes the agent; DEBIT lowers it.
+enum LedgerDirection {
+  CREDIT
+  DEBIT
+}
+
+// ---------------------------------------------------------------------------
+// STATES & CITIES
+// ---------------------------------------------------------------------------
+
+model State {
+  stateId          String   @id @default(dbgenerated("gen_random_uuid()")) @map("state_id") @db.Uuid
+  stateName        String   @unique @map("state_name") @db.VarChar(255)
+  creationDate     DateTime @default(now()) @map("creation_date") @db.Timestamp(6)
+  modificationDate DateTime @updatedAt @map("modification_date") @db.Timestamp(6)
+
+  cities City[]
+
+  @@map("state_data")
+}
+
+model City {
+  cityId           String   @id @default(dbgenerated("gen_random_uuid()")) @map("city_id") @db.Uuid
+  stateId          String   @map("state_id") @db.Uuid
+  cityName         String   @map("city_name") @db.VarChar(255)
+  creationDate     DateTime @default(now()) @map("creation_date") @db.Timestamp(6)
+  modificationDate DateTime @updatedAt @map("modification_date") @db.Timestamp(6)
+
+  state State @relation(fields: [stateId], references: [stateId], onDelete: Cascade)
+
+  @@unique([stateId, cityName])
+  @@map("city_data")
+}
+
+// ---------------------------------------------------------------------------
+// USERS
+// ---------------------------------------------------------------------------
+
+model User {
+  userId           String   @id @default(dbgenerated("gen_random_uuid()")) @map("user_id") @db.Uuid
+  userName         String   @map("user_name") @db.VarChar(255)
+  password         String   @db.VarChar(255)
+  emailId          String   @unique @map("email_id") @db.VarChar(255)
+  mobileNo         String   @map("mobile_no") @db.VarChar(20)
+  gender           String?  @db.VarChar(50)
+  emailVerified    Boolean  @default(false) @map("email_verified")
+  isSuperAdmin     Boolean  @default(false) @map("is_super_admin")
+  creationDate     DateTime @default(now()) @map("creation_date") @db.Timestamp(6)
+  modificationDate DateTime @updatedAt @map("modification_date") @db.Timestamp(6)
+
+  passkeys             Passkey[]
+  userRoles            UserRole[]
+  emailOtps            EmailOtp[]
+  dealerWiseUsers      DealerWiseUser[]
+  agentWiseUsers       AgentWiseUser[]
+  assignedProcessTasks ProcessTask[]       @relation("ProcessTaskAssignee")
+  assignedAssignments  ProcessAssignment[] @relation("AssignmentAssignedBy")
+
+  @@map("users")
+}
+
+/// Stores HMAC-hashed OTP codes for signup email verification and password reset (no magic links).
+model EmailOtp {
+  emailOtpId String     @id @default(dbgenerated("gen_random_uuid()")) @map("email_otp_id") @db.Uuid
+  email      String     @map("email") @db.VarChar(255)
+  userId     String     @map("user_id") @db.Uuid
+  purpose    OtpPurpose @map("purpose")
+  otpHash    String     @map("otp_hash") @db.VarChar(64)
+  expiresAt  DateTime   @map("expires_at") @db.Timestamp(6)
+  createdAt  DateTime   @default(now()) @map("created_at") @db.Timestamp(6)
+
+  user User @relation(fields: [userId], references: [userId], onDelete: Cascade)
+
+  @@index([email, purpose])
+  @@map("email_otps")
+}
+
+// ---------------------------------------------------------------------------
+// PASSKEYS (WebAuthn credentials)
+// ---------------------------------------------------------------------------
+
+model Passkey {
+  id                  String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId              String   @map("user_id") @db.Uuid
+  credentialId        String   @unique @map("credential_id") @db.VarChar(512)
+  credentialPublicKey Bytes    @map("credential_public_key")
+  counter             Int      @default(0)
+  transports          String?  @db.VarChar(255)
+  deviceType          String?  @map("device_type") @db.VarChar(50)
+  backedUp            Boolean  @default(false) @map("backed_up")
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+
+  user User @relation(fields: [userId], references: [userId], onDelete: Cascade)
+
+  @@map("passkeys")
+}
+
+// ---------------------------------------------------------------------------
+// DEALERS
+// ---------------------------------------------------------------------------
+
+model Dealer {
+  dealerId          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  firmName          String   @map("firm_name") @db.VarChar(255)
+  dealerName        String   @map("dealer_name") @db.VarChar(255)
+  // Contact/address are nullable so name-only PLACEHOLDER dealers (agent-created) can exist.
+  // @unique is kept: Postgres permits multiple NULLs, so real dealers stay DB-unique.
+  address           String?  @db.Text
+  city              String?  @db.VarChar(100)
+  state             String?  @db.VarChar(100)
+  pincode           String?  @db.VarChar(10)
+  mobileNo          String?  @unique @map("mobile_no") @db.VarChar(20)
+  emailId           String?  @unique @map("email_id") @db.VarChar(255)
+  displayName       String   @map("display_name") @db.VarChar(255)
+  whatsappNo        String?  @unique @map("whatsapp_no") @db.VarChar(20)
+  isSubscribe       Boolean  @default(false) @map("is_subscribe")
+  // How many agents this dealer may grant via DEALER_GRANT (super-admin-configurable later).
+  maxAgents         Int      @default(2) @map("max_agents")
+  // Placeholder dealer = name-only container owned by an agent (no dealer site/login).
+  isPlaceholder     Boolean  @default(false) @map("is_placeholder")
+  ownerAgentId      String?  @map("owner_agent_id") @db.Uuid
+  // A placeholder may be connected to a real subscribed dealer.
+  connectedDealerId String?  @map("connected_dealer_id") @db.Uuid
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  dealerStatuses             DealerStatus[]
+  dealerReferences           DealerReference[]
+  vehicleProcesses           VehicleProcess[]
+  processReferences          ProcessReference[]
+  dealerWiseUploadCategories DealerWiseUploadCategory[]
+  dealerWiseUsers            DealerWiseUser[]
+  dealerAgents               DealerAgent[]
+  processAssignments         ProcessAssignment[]
+  ownerAgent                 Agent?                     @relation("PlaceholderOwner", fields: [ownerAgentId], references: [agentId], onDelete: Cascade)
+  connectedDealer            Dealer?                    @relation("PlaceholderConnect", fields: [connectedDealerId], references: [dealerId], onDelete: SetNull)
+  placeholderProxies         Dealer[]                   @relation("PlaceholderConnect")
+  khataAccounts              KhataAccount[]
+  ledgerEntries              LedgerEntry[]
+
+  @@index([ownerAgentId])
+  @@map("dealers")
+}
+
+// ---------------------------------------------------------------------------
+// AGENTS  (mirror Dealer — first-class entity with its own app surface)
+// ---------------------------------------------------------------------------
+
+model Agent {
+  agentId     String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  firmName    String   @map("firm_name") @db.VarChar(255)
+  agentName   String   @map("agent_name") @db.VarChar(255)
+  address     String?  @db.Text
+  city        String?  @db.VarChar(100)
+  state       String?  @db.VarChar(100)
+  pincode     String?  @db.VarChar(10)
+  mobileNo    String?  @unique @map("mobile_no") @db.VarChar(20)
+  emailId     String?  @unique @map("email_id") @db.VarChar(255)
+  displayName String   @map("display_name") @db.VarChar(255)
+  whatsappNo  String?  @unique @map("whatsapp_no") @db.VarChar(20)
+  isSubscribe Boolean  @default(false) @map("is_subscribe")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  agentWiseUsers          AgentWiseUser[]
+  dealerAgents            DealerAgent[]
+  agentStatuses           AgentStatus[]
+  ownedPlaceholderDealers Dealer[]            @relation("PlaceholderOwner")
+  processAssignments      ProcessAssignment[]
+  khataAccounts           KhataAccount[]
+  ledgerEntries           LedgerEntry[]
+
+  @@map("agents")
+}
+
+/// Links a platform user to exactly one agent (`userId` is globally unique in this table).
+model AgentWiseUser {
+  awuId     String   @id @default(dbgenerated("gen_random_uuid()")) @map("awu_id") @db.Uuid
+  userId    String   @unique @map("user_id") @db.Uuid
+  agentId   String   @map("agent_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  user  User  @relation(fields: [userId], references: [userId], onDelete: Cascade)
+  agent Agent @relation(fields: [agentId], references: [agentId], onDelete: Cascade)
+
+  @@index([agentId])
+  @@map("agent_wise_user")
+}
+
+/// A dealer granting agent-site access to an agent (many-to-many). The cap counts only
+/// ACTIVE grants with source DEALER_GRANT; CONNECT grants (placeholder→real) are excluded.
+model DealerAgent {
+  dealerAgentId String            @id @default(dbgenerated("gen_random_uuid()")) @map("dealer_agent_id") @db.Uuid
+  dealerId      String            @map("dealer_id") @db.Uuid
+  agentId       String            @map("agent_id") @db.Uuid
+  status        DealerAgentStatus @default(ACTIVE)
+  source        DealerAgentSource @default(DEALER_GRANT)
+  createdAt     DateTime          @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt     DateTime          @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  dealer Dealer @relation(fields: [dealerId], references: [dealerId], onDelete: Cascade)
+  agent  Agent  @relation(fields: [agentId], references: [agentId], onDelete: Cascade)
+
+  @@unique([dealerId, agentId])
+  @@index([dealerId])
+  @@index([agentId])
+  @@map("dealer_agent")
+}
+
+/// Per-agent kanban statuses for RTO work (mirror DealerStatus).
+model AgentStatus {
+  statusId   String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agentId    String   @map("agent_id") @db.Uuid
+  statusName String   @map("status_name") @db.VarChar(255)
+  colour     String?  @db.VarChar(50)
+  statusRank Int      @default(0) @map("status_rank")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  agent              Agent               @relation(fields: [agentId], references: [agentId], onDelete: Cascade)
+  processAssignments ProcessAssignment[]
+
+  @@unique([agentId, statusName])
+  @@map("agent_status")
+}
+
+/// A dealer assigns a vehicle process + a chosen RTO service to an agent. The agent works it
+/// via `agentStatusId`. Source of truth for "who is working what"; no columns on VehicleProcess.
+model ProcessAssignment {
+  assignmentId     String           @id @default(dbgenerated("gen_random_uuid()")) @map("assignment_id") @db.Uuid
+  processId        String           @map("process_id") @db.Uuid
+  dealerId         String           @map("dealer_id") @db.Uuid
+  agentId          String           @map("agent_id") @db.Uuid
+  serviceId        String           @map("service_id") @db.Uuid
+  agentStatusId    String?          @map("agent_status_id") @db.Uuid
+  status           AssignmentStatus @default(OPEN)
+  note             String?          @db.Text
+  assignedByUserId String?          @map("assigned_by_user_id") @db.Uuid
+  createdAt        DateTime         @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt        DateTime         @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  process       VehicleProcess @relation(fields: [processId], references: [processId], onDelete: Cascade)
+  dealer        Dealer         @relation(fields: [dealerId], references: [dealerId], onDelete: Cascade)
+  agent         Agent          @relation(fields: [agentId], references: [agentId], onDelete: Cascade)
+  service       RtoService     @relation(fields: [serviceId], references: [serviceId], onDelete: Restrict)
+  agentStatus   AgentStatus?   @relation(fields: [agentStatusId], references: [statusId], onDelete: SetNull)
+  assignedBy    User?          @relation("AssignmentAssignedBy", fields: [assignedByUserId], references: [userId], onDelete: SetNull)
+  ledgerEntries LedgerEntry[]
+
+  @@unique([processId, agentId, serviceId])
+  @@index([agentId])
+  @@index([dealerId])
+  @@index([processId])
+  @@map("process_assignment")
+}
+
+// ---------------------------------------------------------------------------
+// KHATA / LEDGER  (dealer ↔ agent running-balance book)
+// ---------------------------------------------------------------------------
+
+/// One running-balance account per (real dealer, agent) pair. `balance` is dealer-perspective:
+/// positive => the dealer owes the agent. `dealerId` is ALWAYS a real (non-placeholder) dealer.
+model KhataAccount {
+  khataAccountId String   @id @default(dbgenerated("gen_random_uuid()")) @map("khata_account_id") @db.Uuid
+  dealerId       String   @map("dealer_id") @db.Uuid
+  agentId        String   @map("agent_id") @db.Uuid
+  balance        Decimal  @default(0) @db.Decimal(14, 2)
+  totalCredit    Decimal  @default(0) @map("total_credit") @db.Decimal(14, 2)
+  totalDebit     Decimal  @default(0) @map("total_debit") @db.Decimal(14, 2)
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  // Restrict: never cascade-delete a dealer/agent that has khata history.
+  dealer  Dealer        @relation(fields: [dealerId], references: [dealerId], onDelete: Restrict)
+  agent   Agent         @relation(fields: [agentId], references: [agentId], onDelete: Restrict)
+  entries LedgerEntry[]
+
+  @@unique([dealerId, agentId])
+  @@index([dealerId])
+  @@index([agentId])
+  @@map("khata_account")
+}
+
+/// Immutable ledger entry. `direction` + `amount` is the sole sign source; `balanceAfter` snapshots
+/// the account balance after this row (true per-line running balance). A reversal is an opposite
+/// entry with `reversesEntryId` set; a settlement is a normal balancing entry.
+model LedgerEntry {
+  ledgerEntryId   String          @id @default(dbgenerated("gen_random_uuid()")) @map("ledger_entry_id") @db.Uuid
+  khataAccountId  String          @map("khata_account_id") @db.Uuid
+  dealerId        String          @map("dealer_id") @db.Uuid
+  agentId         String          @map("agent_id") @db.Uuid
+  direction       LedgerDirection
+  amount          Decimal         @db.Decimal(14, 2)
+  balanceAfter    Decimal         @map("balance_after") @db.Decimal(14, 2)
+  description     String?         @db.Text
+  entryDate       DateTime        @default(now()) @map("entry_date") @db.Timestamp(6)
+  seq             BigInt          @default(autoincrement())
+  postedByUserId  String?         @map("posted_by_user_id") @db.Uuid
+  postedByRole    RoleType        @map("posted_by_role")
+  assignmentId    String?         @map("assignment_id") @db.Uuid
+  sourceDealerId  String?         @map("source_dealer_id") @db.Uuid
+  reversesEntryId String?         @unique @map("reverses_entry_id") @db.Uuid
+  isReversed      Boolean         @default(false) @map("is_reversed")
+  createdAt       DateTime        @default(now()) @map("created_at") @db.Timestamp(6)
+
+  account       KhataAccount       @relation(fields: [khataAccountId], references: [khataAccountId], onDelete: Cascade)
+  dealer        Dealer             @relation(fields: [dealerId], references: [dealerId], onDelete: Restrict)
+  agent         Agent              @relation(fields: [agentId], references: [agentId], onDelete: Restrict)
+  assignment    ProcessAssignment? @relation(fields: [assignmentId], references: [assignmentId], onDelete: SetNull)
+  reversesEntry LedgerEntry?       @relation("LedgerReversal", fields: [reversesEntryId], references: [ledgerEntryId], onDelete: SetNull)
+  reversedBy    LedgerEntry?       @relation("LedgerReversal")
+
+  @@index([khataAccountId, seq])
+  @@index([dealerId])
+  @@index([agentId])
+  @@index([assignmentId])
+  @@map("ledger_entry")
+}
+
+// ---------------------------------------------------------------------------
+// RTO SERVICES
+// ---------------------------------------------------------------------------
+
+model RtoService {
+  serviceId   String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  serviceName String   @unique @map("service_name") @db.VarChar(255)
+  shortName   String   @unique @map("short_name") @db.VarChar(50)
+  orderRank   Int      @default(0) @map("order_rank")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  processAssignments ProcessAssignment[]
+
+  @@map("rto_services")
+}
+
+/// Master list for grouping uploads (e.g. RC, insurance photos).
+model UploadCategory {
+  categoryId   String   @id @default(dbgenerated("gen_random_uuid()")) @map("category_id") @db.Uuid
+  categoryName String   @unique @map("category_name") @db.VarChar(255)
+  orderRank    Int      @default(0) @map("order_rank")
+  bothSide     Boolean  @default(false) @map("both_side")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  dealerWiseUploadCategories DealerWiseUploadCategory[]
+
+  @@map("upload_category")
+}
+
+/// Per-dealer link to a global upload category (ordering and workflow flags per dealer).
+/// `processApi` is optional (nullable). `orderRank` is scoped per `dealerId` (create = max for dealer + 1).
+model DealerWiseUploadCategory {
+  dwucId           String   @id @default(dbgenerated("gen_random_uuid()")) @map("dwuc_id") @db.Uuid
+  dealerId         String   @map("dealer_id") @db.Uuid
+  uploadCategoryId String   @map("upload_category_id") @db.Uuid
+  processApi       String?  @map("process_api") @db.VarChar(512)
+  orderRank        Int      @default(0) @map("order_rank")
+  isRequired       Boolean  @default(false) @map("is_required")
+  isProcess        Boolean  @default(false) @map("is_process")
+  isViewInStep     Boolean  @default(false) @map("is_view_in_step")
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  dealer              Dealer               @relation(fields: [dealerId], references: [dealerId], onDelete: Cascade)
+  uploadCategory      UploadCategory       @relation(fields: [uploadCategoryId], references: [categoryId], onDelete: Cascade)
+  processUploadImages ProcessUploadImage[]
+
+  @@unique([dealerId, uploadCategoryId])
+  @@index([dealerId])
+  @@map("dealer_wise_upload_category")
+}
+
+/// Links a platform user to exactly one dealer (`userId` is globally unique in this table).
+model DealerWiseUser {
+  dwuId     String   @id @default(dbgenerated("gen_random_uuid()")) @map("dwu_id") @db.Uuid
+  userId    String   @unique @map("user_id") @db.Uuid
+  dealerId  String   @map("dealer_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  user   User   @relation(fields: [userId], references: [userId], onDelete: Cascade)
+  dealer Dealer @relation(fields: [dealerId], references: [dealerId], onDelete: Cascade)
+
+  @@index([dealerId])
+  @@map("dealer_wise_user")
+}
+
+// ---------------------------------------------------------------------------
+// VEHICLES
+// ---------------------------------------------------------------------------
+
+model Vehicle {
+  vehicleId          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  registrationNumber String    @unique @map("registration_number") @db.VarChar(50)
+  chassisNumber      String?   @unique @map("chassis_number") @db.VarChar(100)
+  engineNumber       String?   @unique @map("engine_number") @db.VarChar(100)
+  vehicleType        String?   @map("vehicle_type") @db.VarChar(50)
+  make               String?   @map("make") @db.VarChar(100)
+  model              String?   @map("model") @db.VarChar(100)
+  registrationDate   DateTime? @map("registration_date") @db.Date
+  manufactureMonth   Int?      @map("manufacture_month")
+  manufactureYear    Int?      @map("manufacture_year")
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt          DateTime  @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  vehicleProcesses VehicleProcess[]
+
+  @@map("vehicles")
+}
+
+// ---------------------------------------------------------------------------
+// DEALER STATUS MASTER
+// ---------------------------------------------------------------------------
+
+model DealerStatus {
+  statusId   String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  dealerId   String   @map("dealer_id") @db.Uuid
+  statusName String   @map("status_name") @db.VarChar(255)
+  colour     String?  @db.VarChar(50)
+  statusRank Int      @default(0) @map("status_rank")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  dealer Dealer @relation(fields: [dealerId], references: [dealerId], onDelete: Cascade)
+
+  @@unique([dealerId, statusName])
+  @@map("dealer_status")
+}
+
+// ---------------------------------------------------------------------------
+// DEALER REFERENCES
+// ---------------------------------------------------------------------------
+
+model DealerReference {
+  referenceId     String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  dealerId        String?  @map("dealer_id") @db.Uuid
+  referenceName   String   @map("reference_name") @db.VarChar(255)
+  referenceNumber String   @map("reference_number") @db.VarChar(20)
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  dealer            Dealer?            @relation(fields: [dealerId], references: [dealerId])
+  processReferences ProcessReference[]
+
+  @@map("dealer_references")
+}
+
+// ---------------------------------------------------------------------------
+// VEHICLE PROCESS
+// ---------------------------------------------------------------------------
+
+model VehicleProcess {
+  processId   String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  vehicleId   String?   @map("vehicle_id") @db.Uuid
+  dealerId    String?   @map("dealer_id") @db.Uuid
+  status      String?   @map("status") @db.VarChar(255)
+  processDate DateTime? @map("process_date") @db.Timestamp(6)
+  // Buy/sell prices for the per-vehicle history (dealer-scoped → private per dealer; never on Vehicle).
+  // purchasePrice pairs with the SELLER person (what the dealer paid); salePrice with the BUYER.
+  purchasePrice Decimal? @map("purchase_price") @db.Decimal(14, 2)
+  salePrice     Decimal? @map("sale_price") @db.Decimal(14, 2)
+  priceCurrency String?  @default("INR") @map("price_currency") @db.VarChar(3)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  vehicle             Vehicle?             @relation(fields: [vehicleId], references: [vehicleId])
+  dealer              Dealer?              @relation(fields: [dealerId], references: [dealerId])
+  persons             Person[]
+  processReferences   ProcessReference[]
+  processUploadImages ProcessUploadImage[]
+  processUploadPhotos ProcessUploadPhoto[]
+  processTasks        ProcessTask[]
+  processAssignments  ProcessAssignment[]
+  processExpenses     ProcessExpense[]
+
+  @@index([vehicleId])
+  @@map("vehicle_process")
+}
+
+/// A dealer-scoped cost booked against one process (RTO fee, repair, commission, …).
+/// Private per dealer (lives on the process, never on the global Vehicle) and feeds net
+/// profit = salePrice − purchasePrice − Σ(amount). Cascade-deleted with the process.
+model ProcessExpense {
+  expenseId String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  processId String   @map("process_id") @db.Uuid
+  label     String   @map("label") @db.VarChar(255)
+  amount    Decimal  @map("amount") @db.Decimal(14, 2)
+  category  String?  @map("category") @db.VarChar(50)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  process VehicleProcess @relation(fields: [processId], references: [processId], onDelete: Cascade)
+
+  @@index([processId])
+  @@map("process_expenses")
+}
+
+/// Image stored for a vehicle process, scoped to a dealer-wise upload category row (`dwucId`).
+model ProcessUploadImage {
+  processUploadImageId String   @id @default(dbgenerated("gen_random_uuid()")) @map("process_upload_image_id") @db.Uuid
+  imageName            String   @map("image_name") @db.VarChar(255)
+  imageLink            String   @map("image_link") @db.Text
+  processId            String   @map("process_id") @db.Uuid
+  dwucId               String   @map("dwuc_id") @db.Uuid
+  createdAt            DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt            DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  process                  VehicleProcess           @relation(fields: [processId], references: [processId], onDelete: Cascade)
+  dealerWiseUploadCategory DealerWiseUploadCategory @relation(fields: [dwucId], references: [dwucId], onDelete: Cascade)
+
+  @@index([processId])
+  @@index([dwucId])
+  @@map("process_upload_image")
+}
+
+/// Named photo entry for a vehicle process (category + file/display name; no URL stored here).
+model ProcessUploadPhoto {
+  processUploadPhotoId String   @id @default(dbgenerated("gen_random_uuid()")) @map("process_upload_photo_id") @db.Uuid
+  processId            String   @map("process_id") @db.Uuid
+  category             String   @map("category") @db.VarChar(255)
+  imageName            String   @map("image_name") @db.VarChar(255)
+  createdAt            DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt            DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  process VehicleProcess @relation(fields: [processId], references: [processId], onDelete: Cascade)
+
+  @@index([processId])
+  @@map("process_upload_photo")
+}
+
+/// Task row for a vehicle process; optional assignee (`User`).
+model ProcessTask {
+  processTaskId String   @id @default(dbgenerated("gen_random_uuid()")) @map("process_task_id") @db.Uuid
+  processId     String   @map("process_id") @db.Uuid
+  taskName      String   @map("task_name") @db.VarChar(512)
+  taskDate      DateTime @map("task_date") @db.Timestamp(6)
+  assignUserId  String?  @map("assign_user_id") @db.Uuid
+  status        String   @default("To-Do") @map("status") @db.VarChar(50)
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  process    VehicleProcess @relation(fields: [processId], references: [processId], onDelete: Cascade)
+  assignUser User?          @relation("ProcessTaskAssignee", fields: [assignUserId], references: [userId], onDelete: SetNull)
+
+  @@index([processId])
+  @@index([assignUserId])
+  @@map("process_task")
+}
+
+// ---------------------------------------------------------------------------
+// BUYER & SELLER DETAILS
+// ---------------------------------------------------------------------------
+
+model Person {
+  personId     String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  personName   String     @map("person_name") @db.VarChar(255)
+  address      String?    @db.Text
+  mobileNumber String     @map("mobile_number") @db.VarChar(20)
+  personType   PersonType @map("person_type")
+  processId    String     @map("process_id") @db.Uuid
+  createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt    DateTime   @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  process VehicleProcess @relation(fields: [processId], references: [processId], onDelete: Cascade)
+
+  @@map("persons")
+}
+
+// ---------------------------------------------------------------------------
+// PROCESS REFERENCES
+// ---------------------------------------------------------------------------
+
+model ProcessReference {
+  processReferenceId String         @id @default(dbgenerated("gen_random_uuid()")) @map("process_reference_id") @db.Uuid
+  processId          String?        @map("process_id") @db.Uuid
+  referenceId        String?        @map("reference_id") @db.Uuid
+  dealerId           String?        @map("dealer_id") @db.Uuid
+  referenceType      ReferenceType? @map("reference_type")
+  createdAt          DateTime       @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt          DateTime       @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  process   VehicleProcess?  @relation(fields: [processId], references: [processId])
+  reference DealerReference? @relation(fields: [referenceId], references: [referenceId])
+  dealer    Dealer?          @relation(fields: [dealerId], references: [dealerId])
+
+  @@map("process_references")
+}
+
+// ---------------------------------------------------------------------------
+// RBAC — modules, pages, actions, roles, permissions
+// ---------------------------------------------------------------------------
+// Effective rule in app code: missing RolePermission row = deny.
+// Rows with isAllowed = false are explicit denies (optional; rare).
+// ---------------------------------------------------------------------------
+
+/// RBAC role. `roleType` = dealer vs agent app. `typeId` = dealer id or agent id (required); meaning follows `roleType`.
+model Role {
+  roleId    String   @id @default(dbgenerated("gen_random_uuid()")) @map("role_id") @db.Uuid
+  roleName  String   @map("role_name") @db.VarChar(255)
+  roleType  RoleType @map("role_type")
+  typeId    String   @map("type_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  permissions RolePermission[]
+  userRoles   UserRole[]
+
+  @@unique([typeId, roleName])
+  @@index([roleType, typeId])
+  @@map("roles")
+}
+
+/// Groups pages (e.g. Vehicles, Dealers). Scoped to dealer vs agent UI.
+model Module {
+  moduleId    String   @id @default(dbgenerated("gen_random_uuid()")) @map("module_id") @db.Uuid
+  moduleName  String   @map("module_name") @db.VarChar(255)
+  moduleType  RoleType @map("module_type")
+  description String?  @db.Text
+  sortOrder   Int      @default(0) @map("sort_order")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  pages Page[]
+
+  @@unique([moduleType, moduleName])
+  @@map("modules")
+}
+
+model Page {
+  pageId      String   @id @default(dbgenerated("gen_random_uuid()")) @map("page_id") @db.Uuid
+  moduleId    String   @map("module_id") @db.Uuid
+  pageName    String   @map("page_name") @db.VarChar(255)
+  /// Unique within module (same slug allowed in another module).
+  slug        String   @map("slug") @db.VarChar(255)
+  description String?  @db.Text
+  sortOrder   Int      @default(0) @map("sort_order")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  module      Module           @relation(fields: [moduleId], references: [moduleId], onDelete: Cascade)
+  actions     PageAction[]
+  permissions RolePermission[]
+
+  @@unique([moduleId, slug])
+  @@index([moduleId])
+  @@map("pages")
+}
+
+/// Actions on a page: use stable keys like VIEW, CREATE, UPDATE, DELETE, EXPORT.
+model PageAction {
+  actionId   String   @id @default(dbgenerated("gen_random_uuid()")) @map("action_id") @db.Uuid
+  pageId     String   @map("page_id") @db.Uuid
+  actionName String   @map("action_name") @db.VarChar(64)
+  label      String?  @db.VarChar(128)
+  sortOrder  Int      @default(0) @map("sort_order")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  page        Page             @relation(fields: [pageId], references: [pageId], onDelete: Cascade)
+  permissions RolePermission[]
+
+  @@unique([pageId, actionName])
+  @@index([pageId])
+  @@map("page_actions")
+}
+
+/// Grants (or explicit denies) for a role on a page + action.
+model RolePermission {
+  rolePermissionId String   @id @default(dbgenerated("gen_random_uuid()")) @map("role_permission_id") @db.Uuid
+  roleId           String   @map("role_id") @db.Uuid
+  pageId           String   @map("page_id") @db.Uuid
+  actionId         String   @map("action_id") @db.Uuid
+  isAllowed        Boolean  @default(true) @map("is_allowed")
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  role   Role       @relation(fields: [roleId], references: [roleId], onDelete: Cascade)
+  page   Page       @relation(fields: [pageId], references: [pageId], onDelete: Cascade)
+  action PageAction @relation(fields: [actionId], references: [actionId], onDelete: Cascade)
+
+  @@unique([roleId, pageId, actionId])
+  @@index([roleId])
+  @@index([pageId])
+  @@index([actionId])
+  @@map("role_permissions")
+}
+
+/// Assigns application RBAC roles to users (separate from JWT `role` claim if you keep both during migration).
+model UserRole {
+  userId    String   @map("user_id") @db.Uuid
+  roleId    String   @map("role_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+
+  user User @relation(fields: [userId], references: [userId], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [roleId], onDelete: Cascade)
+
+  @@id([userId, roleId])
+  @@index([roleId])
+  @@map("user_roles")
+}

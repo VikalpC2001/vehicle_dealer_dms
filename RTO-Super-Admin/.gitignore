@@ -1,0 +1,40 @@
+# ── Logs ─────────────────────────────────────────────────────
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# ── Dependencies ─────────────────────────────────────────────
+node_modules
+
+# ── Build output ─────────────────────────────────────────────
+dist
+dist-ssr
+*.local
+
+# ── Environment (keep the example) ───────────────────────────
+# Vite only inlines VITE_* vars, but .env is still machine-specific — commit .env.example instead.
+.env
+.env.*
+!.env.example
+
+# ── Test coverage ────────────────────────────────────────────
+coverage
+
+# ── Editor directories and files ─────────────────────────────
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# ── Storybook ────────────────────────────────────────────────
+*storybook.log
+storybook-static

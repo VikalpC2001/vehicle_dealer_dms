@@ -1,0 +1,74 @@
+---
+description: Core project context, domain knowledge, and coding standards for EDealer — a multi-tenant SaaS platform for vehicle dealers and RTO agents.
+alwaysApply: true
+---
+
+# EDealer — Project Context
+
+## Domain
+
+Multi-tenant SaaS platform for second-hand vehicle dealers and RTO agents.
+
+Core modules: Vehicle Management, RTO Transfer Tracking, Dealer & Agent Management, Workflow Engine (Jira-style), Task & Subtask Management, OCR Vehicle Data Extraction, Document & Photo Management, Expense & Profit Tracking, Khata Book Ledger, Marketplace Listings, Notifications, Audit Logs.
+
+## Tech Stack
+
+- **Runtime:** Node.js with Express.js
+- **Language:** TypeScript (strict mode, ES2022)
+- **ORM:** Prisma with PostgreSQL
+- **Auth:** JWT + WebAuthn / Passkeys (`@simplewebauthn/server`)
+- **Validation:** Zod
+- **Logging:** Winston
+- **Lint:** ESLint + Prettier
+
+## Architecture Layers (Strict Separation)
+
+```
+Controller → Service → Repository → Prisma
+```
+
+1. **Controller** (`src/controllers/`): HTTP concerns only — extract validated body, call service, call `sendSuccess`/`sendError`. No business logic.
+2. **Service** (`src/services/`): Business logic, orchestration, error throwing via `AppError`.
+3. **Repository** (`src/repositories/`): All Prisma calls. One repository per domain model. Services never import `prisma` directly.
+4. **Validation** (`src/validations/`): Zod schemas per route group. Applied via `validate()` middleware.
+
+## Naming Conventions
+
+- **Files/dirs:** `kebab-case` (e.g. `password-auth.service.ts`)
+- **Classes/Enums:** `PascalCase`
+- **Functions/variables:** `camelCase`
+- **Constants/env vars:** `UPPER_SNAKE_CASE`
+- **DB columns:** `snake_case` (use `@map` in Prisma)
+- **Prisma models:** `PascalCase` with `@@map("snake_case_table")`
+
+## API Response Envelope
+
+Always use `sendSuccess(res, message, data, statusCode)` or throw `AppError`.
+
+```json
+{ "statusCode": 200, "message": "...", "data": { ... } }
+```
+
+## Error Handling
+
+- Throw `AppError(message, statusCode, code)` from services.
+- Use `asyncHandler` wrapper on all async route handlers.
+- Global `errorHandler` middleware catches all errors.
+
+## API Documentation & Postman
+
+Whenever you **add or change** an API endpoint, you must:
+
+1. **Update the Postman collection** — Add or edit the request in the project Postman collection JSON (e.g. `docs/postman/EDealer-API.postman_collection.json`) so method, path, headers, and sample body match the implementation.
+2. **Update API docs** — Add or update the endpoint in the API detail documentation (e.g. `docs/api/API.md` or per-module docs) with: method, path, auth requirement, request body/query/params, response shape, and example.
+
+Treat Postman and API docs as part of the same change set as the code.
+
+## Key Rules
+
+- Never use `any`. Use `unknown` + narrowing or proper types.
+- Use `import type` for type-only imports.
+- Every exported function must have a JSDoc comment.
+- Passwords are hashed with bcrypt; never stored or logged in plain text.
+- All IDs are UUIDs (`@db.Uuid`) with `gen_random_uuid()` default.
+- Prettier: single quotes, trailing commas, 100 print width, 2-space indent.
