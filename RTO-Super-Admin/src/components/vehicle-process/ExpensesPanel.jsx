@@ -41,8 +41,9 @@ const toPayload = (v) => ({
  *
  * @param {object} props
  * @param {string} props.processId
+ * @param {string} [props.dealerId] - Managed dealer scope when an agent edits a placeholder's process.
  */
-export function ExpensesPanel({ processId }) {
+export function ExpensesPanel({ processId, dealerId }) {
   const queryClient = useQueryClient()
   const [addOpen, setAddOpen] = useState(false)
   const [editExpense, setEditExpense] = useState(null)
@@ -50,14 +51,19 @@ export function ExpensesPanel({ processId }) {
 
   const { data: expenses = [], isLoading } = useQuery({
     queryKey: ['process-expenses', processId],
-    queryFn: () => processExpenseService.getByProcess(processId),
+    queryFn: () => processExpenseService.getByProcess(processId, dealerId),
     enabled: Boolean(processId),
   })
 
-  const invalidate = () => queryClient.invalidateQueries({ queryKey: ['process-expenses', processId] })
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: ['process-expenses', processId] })
+    // Expenses feed the Vehicle History summary (expense/net-profit totals) — refresh it too so the
+    // History tab isn't stale (queries have a 5-min staleTime, so it otherwise waits for a reload).
+    queryClient.invalidateQueries({ queryKey: ['vehicle-history'] })
+  }
 
   const createMutation = useMutation({
-    mutationFn: (values) => processExpenseService.create({ processId, ...toPayload(values) }),
+    mutationFn: (values) => processExpenseService.create({ processId, ...toPayload(values) }, dealerId),
     onSuccess: () => {
       invalidate()
       toast({ title: 'Expense added', variant: 'success' })
@@ -67,7 +73,7 @@ export function ExpensesPanel({ processId }) {
   })
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, values }) => processExpenseService.update(id, toPayload(values)),
+    mutationFn: ({ id, values }) => processExpenseService.update(id, toPayload(values), dealerId),
     onSuccess: () => {
       invalidate()
       toast({ title: 'Expense updated', variant: 'success' })
@@ -77,7 +83,7 @@ export function ExpensesPanel({ processId }) {
   })
 
   const deleteMutation = useMutation({
-    mutationFn: (id) => processExpenseService.remove(id),
+    mutationFn: (id) => processExpenseService.remove(id, dealerId),
     onSuccess: () => {
       invalidate()
       toast({ title: 'Expense deleted', variant: 'success' })

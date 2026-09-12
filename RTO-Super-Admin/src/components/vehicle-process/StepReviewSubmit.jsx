@@ -1,5 +1,8 @@
+import { useState } from 'react'
+import { FileText } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { DocumentPreviewDialog } from './DocumentPreviewDialog'
 
 /**
  * Step 3 — read-only review of everything before the single create call.
@@ -10,8 +13,10 @@ import { Badge } from '@/components/ui/badge'
  * @param {Array<{referenceId,referenceName,referenceNumber}>} props.references
  */
 export function StepReviewSubmit({ values, slots, references = [] }) {
+  const [preview, setPreview] = useState(null) // { url, label }
   const uploaded = Object.values(slots).filter((s) => s.status === 'uploaded')
-  const reference = references.find((r) => r.referenceId === values.sellerReferenceId)
+  const sellerRef = references.find((r) => r.referenceId === values.sellerReferenceId)
+  const buyerRef = references.find((r) => r.referenceId === values.buyerReferenceId)
 
   const vehicleRows = [
     ['Registration Number', values.registrationNumber],
@@ -68,12 +73,19 @@ export function StepReviewSubmit({ values, slots, references = [] }) {
         </Card>
       )}
 
-      {reference && (
-        <div className="flex items-center gap-2 text-sm">
-          <span className="text-muted-foreground">Reference:</span>
-          <Badge variant="secondary">
-            {reference.referenceName} ({reference.referenceNumber})
-          </Badge>
+      {(sellerRef || buyerRef) && (
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <span className="text-muted-foreground">References:</span>
+          {sellerRef && (
+            <Badge variant="secondary">
+              Seller: {sellerRef.referenceName} ({sellerRef.referenceNumber})
+            </Badge>
+          )}
+          {buyerRef && (
+            <Badge variant="secondary">
+              Buyer: {buyerRef.referenceName} ({buyerRef.referenceNumber})
+            </Badge>
+          )}
         </div>
       )}
 
@@ -88,11 +100,25 @@ export function StepReviewSubmit({ values, slots, references = [] }) {
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               {uploaded.map((slot) => (
                 <figure key={slot.category} className="space-y-1">
-                  <img
-                    src={slot.previewUrl || slot.publicUrl}
-                    alt={slot.category}
-                    className="h-24 w-full rounded-md border border-border object-cover"
-                  />
+                  <button
+                    type="button"
+                    onClick={() => setPreview({ url: slot.publicUrl || slot.previewUrl, label: slot.category })}
+                    className="block w-full cursor-pointer"
+                    aria-label={`Preview ${slot.category}`}
+                  >
+                    {slot.isPdf ? (
+                      <div className="flex h-24 w-full flex-col items-center justify-center gap-1 rounded-md border border-border bg-muted/40 text-muted-foreground transition-colors hover:bg-muted">
+                        <FileText className="h-6 w-6" />
+                        <span className="text-[11px] font-medium">PDF</span>
+                      </div>
+                    ) : (
+                      <img
+                        src={slot.previewUrl || slot.publicUrl}
+                        alt={slot.category}
+                        className="h-24 w-full rounded-md border border-border object-cover"
+                      />
+                    )}
+                  </button>
                   <figcaption className="truncate text-xs text-muted-foreground">{slot.category}</figcaption>
                 </figure>
               ))}
@@ -100,6 +126,13 @@ export function StepReviewSubmit({ values, slots, references = [] }) {
           )}
         </CardContent>
       </Card>
+
+      <DocumentPreviewDialog
+        open={Boolean(preview)}
+        onOpenChange={(o) => !o && setPreview(null)}
+        url={preview?.url}
+        label={preview?.label}
+      />
     </div>
   )
 }

@@ -1,5 +1,5 @@
 import { StatusCodes } from 'http-status-codes';
-import type { Agent } from '@prisma/client';
+import type { Agent, ApprovalStatus } from '@prisma/client';
 import * as agentRepository from '../repositories/agent.repository';
 import { AppError } from '../utils/app-error';
 import { parsePagination, buildPaginationMeta } from '../utils/pagination';
@@ -21,6 +21,7 @@ export interface CreateAgentInput {
   displayName: string;
   whatsappNo?: string | null;
   isSubscribe?: boolean;
+  approvalStatus?: ApprovalStatus;
 }
 
 /**
@@ -40,6 +41,9 @@ export interface UpdateAgentInput {
   whatsappNo?: string | null;
   isSubscribe: boolean;
 }
+
+/** Profile fields an agent may edit about themselves — everything except `isSubscribe` (super-admin's). */
+export type UpdateAgentProfileInput = Omit<UpdateAgentInput, 'isSubscribe'>;
 
 /** Returns true when an optional contact value is present (non-null, non-empty). */
 function isProvided(value?: string | null): value is string {
@@ -119,6 +123,22 @@ export async function updateAgent(agentId: string, input: UpdateAgentInput): Pro
     }
   }
   return agentRepository.updateAgent(agentId, input);
+}
+
+/**
+ * Updates the caller agent's OWN profile. Preserves the server-held `isSubscribe` flag (only a
+ * super-admin may change it), so an agent editing their profile can never grant themselves a
+ * subscription. Runs the same uniqueness checks as {@link updateAgent}.
+ *
+ * @param agentId - The caller's own agent id (resolved from the token).
+ * @param input - Editable profile fields (no `isSubscribe`).
+ */
+export async function updateMyAgentProfile(
+  agentId: string,
+  input: UpdateAgentProfileInput,
+): Promise<Agent> {
+  const current = await getAgentById(agentId);
+  return updateAgent(agentId, { ...input, isSubscribe: current.isSubscribe });
 }
 
 /**

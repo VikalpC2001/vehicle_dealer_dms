@@ -9,6 +9,8 @@ const AUTH_PUBLIC_PATHS = [
   '/auth/verify-otp',
   '/auth/reset-password',
   '/auth/resend-otp',
+  // Public agent-onboarding: prefill + accept an invitation without a session.
+  '/agent-invitations/accept',
 ]
 
 function getStoredToken() {

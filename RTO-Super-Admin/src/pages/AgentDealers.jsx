@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
-import { Plus, Pencil, Trash2, Link2, Unlink, Loader2, Building2 } from 'lucide-react'
+import { Plus, Pencil, Trash2, Link2, Unlink, Loader2, Building2, Car } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -32,6 +33,7 @@ import { toast } from '@/hooks/use-toast'
 
 export default function AgentDealers() {
   const queryClient = useQueryClient()
+  const navigate = useNavigate()
 
   const { data: placeholders = [], isLoading } = useQuery({
     queryKey: ['placeholder-dealers'],
@@ -150,6 +152,17 @@ export default function AgentDealers() {
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          navigate(`/agent/dealers/${ph.dealerId}/vehicles`, {
+                            state: { dealerName: ph.firmName },
+                          })
+                        }
+                      >
+                        <Car className="mr-1.5 h-4 w-4" /> Vehicles
+                      </Button>
                       {ph.connectedDealerId ? (
                         <>
                           <Badge variant="success">

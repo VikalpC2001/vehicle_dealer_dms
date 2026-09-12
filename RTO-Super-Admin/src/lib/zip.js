@@ -27,6 +27,21 @@ function downloadBlob(blob, filename) {
 }
 
 /**
+ * Fetches a stored file (same-origin via toAppImageUrl, so no CORS/auth) and saves it to disk with
+ * the given filename. Used to let a dealer download an RTO receipt (PDF/image) reliably even when the
+ * file is served from a different origin (where a plain `download` link would only open it).
+ *
+ * @param {string} url - The file URL (photoUrl).
+ * @param {string} filename - Suggested download filename.
+ */
+export async function downloadFileFromUrl(url, filename) {
+  const res = await fetch(toAppImageUrl(url))
+  if (!res.ok) throw new Error(`Failed to download the file (HTTP ${res.status}).`)
+  const blob = await res.blob()
+  downloadBlob(blob, filename)
+}
+
+/**
  * Downloads all of a process's images as a ZIP. Structure:
  *   <registrationNumber>_<YYYY-MM-DD>/<category>/<files>
  * Images are fetched same-origin (via toAppImageUrl) so no CORS/auth is needed.

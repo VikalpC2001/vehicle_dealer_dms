@@ -6,6 +6,7 @@ import {
   createAssignmentHandler,
   listAssignmentsHandler,
   cancelAssignmentHandler,
+  updateAssignmentCostHandler,
   listAgentAssignmentsHandler,
   getAssignmentDetailsHandler,
   updateAgentStatusHandler,
@@ -14,6 +15,7 @@ import {
   createAssignmentSchema,
   listAssignmentsQuerySchema,
   assignmentIdParamsSchema,
+  updateAssignmentCostSchema,
   agentAssignmentsQuerySchema,
   updateAgentStatusSchema,
 } from '../validations/process-assignment.validation';
@@ -44,6 +46,13 @@ router.patch(
   '/:id/agent-status',
   validate(updateAgentStatusSchema),
   asyncHandler(updateAgentStatusHandler),
+);
+
+// Dealer-scoped: set/change/remove the agent cost recorded in the ledger for an assignment.
+router.patch(
+  '/:id/cost',
+  validate(updateAssignmentCostSchema),
+  asyncHandler(updateAssignmentCostHandler),
 );
 
 router.delete('/:id', validate(assignmentIdParamsSchema), asyncHandler(cancelAssignmentHandler));

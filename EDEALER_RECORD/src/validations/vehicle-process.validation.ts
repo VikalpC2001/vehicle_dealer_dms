@@ -24,8 +24,9 @@ const priceFields = {
 };
 
 /**
- * Cross-field rules for a process body: at most one SELLER and one BUYER, and a price may be set
- * only when the matching counterparty (seller for purchase, buyer for sale) is present.
+ * Cross-field rules for a process body: at most one SELLER and one BUYER. Prices are independent
+ * process attributes — `purchasePrice`/`salePrice` may be recorded regardless of whether a
+ * seller/buyer person is present (a dealer records what they paid even before capturing the party).
  */
 function refineProcessBody(
   val: { persons?: { personType: string }[]; purchasePrice?: number; salePrice?: number },
@@ -36,16 +37,11 @@ function refineProcessBody(
   const buyers = persons.filter((p) => p.personType === 'BUYER').length;
   if (sellers > 1) ctx.addIssue({ code: 'custom', path: ['persons'], message: 'At most one seller per process' });
   if (buyers > 1) ctx.addIssue({ code: 'custom', path: ['persons'], message: 'At most one buyer per process' });
-  if (val.purchasePrice != null && sellers === 0)
-    ctx.addIssue({ code: 'custom', path: ['purchasePrice'], message: 'Purchase price requires a seller' });
-  if (val.salePrice != null && buyers === 0)
-    ctx.addIssue({ code: 'custom', path: ['salePrice'], message: 'Sale price requires a buyer' });
 }
 
 const vehicleProcessBodyFields = {
   vehicleId: z.string().uuid('Invalid vehicle ID'),
   dealerId: z.string().uuid('Invalid dealer ID').optional(),
-  status: z.string().min(1, 'Status is required').max(255),
   processDate: z.string().min(1, 'Process date is required'),
   persons: z.array(personSchema).min(1, 'At least one person is required'),
   ...priceFields,
@@ -59,7 +55,15 @@ export const updateVehicleProcessSchema = z.object({
   params: z.object({
     id: z.string().uuid('Invalid process ID'),
   }),
-  body: z.object(vehicleProcessBodyFields).superRefine(refineProcessBody),
+  // `persons` is optional on update: person management lives in the /persons endpoints (incl.
+  // change-buyer, which keeps CANCELLED buyers on the process). Status/price-only updates omit it
+  // and leave persons untouched — re-sending them would resurface a CANCELLED buyer as a 2nd buyer.
+  body: z
+    .object({
+      ...vehicleProcessBodyFields,
+      persons: z.array(personSchema).min(1, 'At least one person is required').optional(),
+    })
+    .superRefine(refineProcessBody),
 });
 
 export const getVehicleProcessByIdSchema = z.object({
@@ -70,10 +74,75 @@ export const getVehicleProcessByIdSchema = z.object({
 
 export const getVehicleProcessDetailsSchema = getVehicleProcessByIdSchema;
 
+/** PATCH /vehicle-processes/:id/agent-status — move an agent-created process on the agent board. */
+export const updateVehicleProcessAgentStatusSchema = z.object({
+  params: z.object({
+    id: z.string().uuid('Invalid process ID'),
+  }),
+  body: z.object({
+    agentStatusId: z.string().uuid('Invalid status ID'),
+  }),
+});
+
+/** PATCH /vehicle-processes/:id/receipt — set/replace the agent-uploaded RTO receipt (flat upload key). */
+export const setVehicleProcessReceiptSchema = z.object({
+  params: z.object({
+    id: z.string().uuid('Invalid process ID'),
+  }),
+  body: z.object({
+    imageName: z.string().min(1, 'Receipt file is required').max(512),
+  }),
+});
+
+/** PATCH /vehicle-processes/:id/tracking — set/clear the RC-book tracking number (blank clears it). */
+export const setVehicleProcessTrackingSchema = z.object({
+  params: z.object({
+    id: z.string().uuid('Invalid process ID'),
+  }),
+  body: z.object({
+    trackingNumber: z.string().max(255, 'Tracking number is too long'),
+  }),
+});
+
+/**
+ * PATCH /vehicle-processes/:id/status — set or clear a process's fixed lifecycle status. `null`
+ * clears it back to OPEN (subject to the open-uniqueness invariant). `dealerId?` is accepted for the
+ * agent/admin managed-dealer passthrough, mirroring the other vehicle-process writes.
+ */
+export const setVehicleProcessStatusSchema = z.object({
+  params: z.object({
+    id: z.string().uuid('Invalid process ID'),
+  }),
+  body: z.object({
+    dealerId: z.string().uuid('Invalid dealer ID').optional(),
+    status: z.enum(['SOLD', 'COMPLETE', 'SCRAP']).nullable(),
+  }),
+});
+
+/** PUT /vehicle-processes/:id/tags — full-replace the process's tags (empty array clears them). */
+export const setVehicleProcessTagsSchema = z.object({
+  params: z.object({
+    id: z.string().uuid('Invalid process ID'),
+  }),
+  body: z.object({
+    dealerId: z.string().uuid('Invalid dealer ID').optional(),
+    tagIds: z.array(z.string().uuid('Invalid tag ID')),
+  }),
+});
+
 export const listVehicleProcessesSchema = z.object({
   query: z.object({
     page: z.coerce.number().optional(),
     limit: z.coerce.number().optional(),
+    // Which dealer's processes to list: an agent picks a dealer they manage; a super-admin may
+    // narrow to one dealer. Ignored for a dealer caller (scoped to their own token dealer).
+    dealerId: z.string().uuid('Invalid dealer ID').optional(),
+    // Free-text search over the vehicle's registration number and any person's name.
+    search: z.string().trim().max(255).optional(),
+    // Narrow the list to processes carrying this tag (server-side, so pagination totals stay correct).
+    tagId: z.string().uuid('Invalid tag ID').optional(),
+    // Narrow by lifecycle status: a terminal value, or 'OPEN' for status-less (open) processes.
+    status: z.enum(['SOLD', 'COMPLETE', 'SCRAP', 'OPEN']).optional(),
   }),
 });
 
@@ -124,6 +193,13 @@ export const startVehicleProcessWithVehicleSchema = z.object({
 export type CreateVehicleProcessBody = z.infer<typeof createVehicleProcessSchema>['body'];
 export type UpdateVehicleProcessBody = z.infer<typeof updateVehicleProcessSchema>['body'];
 export type VehicleProcessIdParams = z.infer<typeof getVehicleProcessByIdSchema>['params'];
+export type UpdateVehicleProcessAgentStatusBody = z.infer<
+  typeof updateVehicleProcessAgentStatusSchema
+>['body'];
+export type SetVehicleProcessReceiptBody = z.infer<typeof setVehicleProcessReceiptSchema>['body'];
+export type SetVehicleProcessTrackingBody = z.infer<typeof setVehicleProcessTrackingSchema>['body'];
+export type SetVehicleProcessStatusBody = z.infer<typeof setVehicleProcessStatusSchema>['body'];
+export type SetVehicleProcessTagsBody = z.infer<typeof setVehicleProcessTagsSchema>['body'];
 export type StartVehicleProcessWithVehicleBody = z.infer<
   typeof startVehicleProcessWithVehicleSchema
 >['body'];

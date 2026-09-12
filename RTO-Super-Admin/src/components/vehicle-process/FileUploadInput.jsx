@@ -1,9 +1,9 @@
 import { useRef } from 'react'
-import { Upload, Loader2, CheckCircle2, AlertCircle, X, RefreshCw } from 'lucide-react'
+import { Upload, Loader2, CheckCircle2, AlertCircle, X, RefreshCw, FileText } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { cn } from '@/lib/utils'
-import { IMAGE_MIME_TYPES } from '@/lib/vehicleProcess'
+import { DOCUMENT_MIME_TYPES } from '@/lib/vehicleProcess'
 
 /**
  * A single image upload slot with preview, status, and per-file retry.
@@ -26,6 +26,7 @@ export function FileUploadInput({
   required = false,
   status = 'idle',
   previewUrl,
+  isPdf = false,
   error,
   onSelect,
   onClear,
@@ -62,7 +63,7 @@ export function FileUploadInput({
           ref={inputRef}
           id={id}
           type="file"
-          accept={IMAGE_MIME_TYPES.join(',')}
+          accept={DOCUMENT_MIME_TYPES.join(',')}
           className="hidden"
           onChange={handleChange}
           aria-invalid={status === 'error'}
@@ -70,11 +71,18 @@ export function FileUploadInput({
 
         {previewUrl ? (
           <div className="relative">
-            <img
-              src={previewUrl}
-              alt={`${label} preview`}
-              className="h-24 w-auto max-w-full rounded-md object-cover"
-            />
+            {isPdf ? (
+              <div className="flex h-24 w-20 flex-col items-center justify-center gap-1 rounded-md border border-border bg-muted/40 text-muted-foreground">
+                <FileText className="h-7 w-7" />
+                <span className="text-[11px] font-medium">PDF</span>
+              </div>
+            ) : (
+              <img
+                src={previewUrl}
+                alt={`${label} preview`}
+                className="h-24 w-auto max-w-full rounded-md object-cover"
+              />
+            )}
             {onClear && status !== 'uploading' && (
               <button
                 type="button"
@@ -94,7 +102,7 @@ export function FileUploadInput({
           >
             <Upload className="h-6 w-6" />
             <span className="text-xs font-medium">Click to upload</span>
-            <span className="text-[11px]">PNG, JPG or WEBP · max 5 MB</span>
+            <span className="text-[11px]">PNG, JPG, WEBP or PDF · max 5 MB</span>
           </button>
         )}
 

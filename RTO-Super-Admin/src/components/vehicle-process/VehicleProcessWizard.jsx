@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Stepper } from '@/components/ui/stepper'
 import { toast } from '@/hooks/use-toast'
 import { dealerWiseUploadCategoryService } from '@/services/dealerWiseUploadCategoryService'
+import { agentWiseUploadCategoryService } from '@/services/agentWiseUploadCategoryService'
 import { dealerReferenceService } from '@/services/dealerReferenceService'
 import { uploadService, validateImageFile } from '@/services/uploadService'
 import { aiService, getAiErrorMessage } from '@/services/aiService'
@@ -12,10 +13,9 @@ import { collageVertical } from '@/lib/image'
 import {
   assembleStartPayload,
   isRcCategory,
-  isIdProofCategory,
   isBuyerIdCategory,
+  isPdfFile,
   mapRcOcrToForm,
-  mapIdOcrToForm,
   mapIdProofToPerson,
 } from '@/lib/vehicleProcess'
 import { StepUploadDocuments } from './StepUploadDocuments'
@@ -44,8 +44,10 @@ function nonEmpty(obj) {
  * @param {(payload: object) => Promise<unknown>} props.onSubmit
  * @param {boolean} props.submitting
  * @param {() => void} props.onCancel
+ * @param {'dealer'|'agent'} [props.categorySource] Which upload-category config feeds the document
+ *   checklist — the dealer's own (default) or the calling agent's (agent-managed processes).
  */
-export function VehicleProcessWizard({ onSubmit, submitting, onCancel }) {
+export function VehicleProcessWizard({ onSubmit, submitting, onCancel, categorySource = 'dealer' }) {
   const [step, setStep] = useState(0)
   const [slots, setSlots] = useState({}) // keyed by categoryId
   const [modes, setModes] = useState({}) // categoryId -> 'single' | 'both' (bothSide categories only)
@@ -59,13 +61,20 @@ export function VehicleProcessWizard({ onSubmit, submitting, onCancel }) {
     slotsRef.current = slots
   }, [slots])
 
+  const uploadCategoryApi =
+    categorySource === 'agent' ? agentWiseUploadCategoryService : dealerWiseUploadCategoryService
   const { data: categories = [], isLoading: categoriesLoading } = useQuery({
-    queryKey: ['dealer-wise-upload-categories', 'view-in-step'],
-    queryFn: () => dealerWiseUploadCategoryService.getViewInStep(),
+    queryKey: [
+      categorySource === 'agent' ? 'agent-wise-upload-categories' : 'dealer-wise-upload-categories',
+      'view-in-step',
+    ],
+    queryFn: () => uploadCategoryApi.getViewInStep(),
   })
   const { data: references = [] } = useQuery({
     queryKey: ['dealer-references', 'ddl'],
     queryFn: () => dealerReferenceService.getDdl(),
+    // Agent mode has no dealer-scoped references (the endpoint would 403); the steps handle [].
+    enabled: categorySource !== 'agent',
   })
 
   const categoryById = useMemo(() => {
@@ -141,19 +150,9 @@ export function VehicleProcessWizard({ onSubmit, submitting, onCancel }) {
             toast({ title: 'Auto-fill unavailable', description: getAiErrorMessage(err) })
           })
       }
-    } else if (isIdProofCategory(category)) {
-      aiService
-        .analyzeIdProof(file)
-        .then((data) => {
-          const mapped = nonEmpty(mapIdOcrToForm(data))
-          setOcrPrefill((prev) => ({
-            ...prev,
-            sellerName: prev.sellerName || mapped.sellerName || '',
-            sellerAddress: prev.sellerAddress || mapped.sellerAddress || '',
-          }))
-        })
-        .catch(() => {})
     }
+    // NOTE: the seller (= vehicle owner) is sourced ONLY from the RC book (isRcCategory above).
+    // An "Owner ID" upload is stored as a document but never used to auto-fill the seller.
   }
 
   const uploadSingle = (categoryId, file, previewUrl) => {
@@ -183,12 +182,48 @@ export function VehicleProcessWizard({ onSubmit, submitting, onCancel }) {
       .catch((err) => updateSlot(categoryId, { status: 'error', error: err?.message || 'Upload failed' }))
   }
 
+  // A PDF document can't be cropped, collaged, or OCR'd — store it as the single document for the
+  // category and upload it as-is (no cropper, no combine, no auto-fill).
+  const uploadPdf = (categoryId, category, file) => {
+    const prev = slotsRef.current[categoryId]
+    if (prev) {
+      ;['front', 'back', 'single'].forEach((s) => prev[s]?.url && URL.revokeObjectURL(prev[s].url))
+      if (prev.previewUrl) URL.revokeObjectURL(prev.previewUrl)
+    }
+    const url = URL.createObjectURL(file)
+    setSlots((p) => ({
+      ...p,
+      [categoryId]: {
+        categoryId,
+        category: category.categoryName,
+        bothSide: category.bothSide,
+        single: { file, url },
+        isPdf: true,
+        previewUrl: url,
+        status: 'uploading',
+        error: null,
+      },
+    }))
+    uploadService
+      .uploadImage(file)
+      .then(({ fileKey, publicUrl }) =>
+        updateSlot(categoryId, { status: 'uploaded', fileKey, publicUrl, error: null })
+      )
+      .catch((err) => updateSlot(categoryId, { status: 'error', error: err?.message || 'Upload failed' }))
+  }
+
   const handleSelectRaw = (categoryId, side, rawFile) => {
     const category = categoryById[categoryId]
     if (!category) return
     const check = validateImageFile(rawFile)
     if (!check.ok) {
-      toast({ title: 'Invalid image', description: check.error, variant: 'destructive' })
+      toast({ title: 'Invalid file', description: check.error, variant: 'destructive' })
+      return
+    }
+    if (isPdfFile(rawFile)) {
+      // Force single mode (a PDF is one document) and upload directly.
+      setModes((m) => ({ ...m, [categoryId]: 'single' }))
+      uploadPdf(categoryId, category, rawFile)
       return
     }
     setCropper({ categoryId, side, file: rawFile, fileName: `${category.categoryName}-${side}.jpg` })
@@ -285,7 +320,12 @@ export function VehicleProcessWizard({ onSubmit, submitting, onCancel }) {
 
   const handleConfirm = async () => {
     const payload = assembleStartPayload(verifyValues, Object.values(slots))
-    await onSubmit(payload)
+    try {
+      await onSubmit(payload)
+    } catch {
+      // The caller's mutation surfaces the error (e.g. the 4113 "open process exists" toast); swallow
+      // here so a rejected create doesn't become an unhandled promise rejection.
+    }
   }
 
   const verifyDefaults = { ...defaultVehicleProcessValues, ...ocrPrefill, ...(verifyValues ?? {}) }

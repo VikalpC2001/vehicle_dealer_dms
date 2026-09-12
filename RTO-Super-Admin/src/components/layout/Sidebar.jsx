@@ -1,26 +1,31 @@
 import { NavLink, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import {
-  LayoutDashboard, Users, FileText, CreditCard, Bell, Activity, Settings, LogOut, Shield, Store, MapPin, Car, UserCog, BookOpen, LayoutGrid, ClipboardList, History,
+  LayoutDashboard, Users, FileText, CreditCard, Bell, Activity, Settings, LogOut, Shield, ShieldCheck, Store, MapPin, Car, UserCog, BookOpen, LayoutGrid, ClipboardList, History, Inbox, FileStack, CheckCheck,
 } from 'lucide-react'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import { NAV_ITEMS, NAV_ITEMS_DEALER, NAV_ITEMS_AGENT, APP_NAME } from '@/lib/constants'
 import { useAuth } from '@/context/AuthContext'
+import { useCapabilities } from '@/hooks/useCapabilities'
 import { getInitials } from '@/lib/utils'
 import { cn } from '@/lib/utils'
 
 const iconMap = {
-  LayoutDashboard, Store, MapPin, Users, FileText, CreditCard, Bell, Activity, Settings, Car, UserCog, BookOpen, LayoutGrid, ClipboardList, History,
+  LayoutDashboard, Store, MapPin, Users, FileText, CreditCard, Bell, Activity, Settings, Car, UserCog, BookOpen, LayoutGrid, ClipboardList, History, Inbox, FileStack, ShieldCheck, CheckCheck,
 }
 
 export function Sidebar({ collapsed, onClose }) {
   const { user, logout } = useAuth()
+  const { can } = useCapabilities()
   const navigate = useNavigate()
 
   const role = user?.role
-  const navItems = role === 'agent' ? NAV_ITEMS_AGENT : role === 'dealer' ? NAV_ITEMS_DEALER : NAV_ITEMS
+  const baseNavItems = role === 'agent' ? NAV_ITEMS_AGENT : role === 'dealer' ? NAV_ITEMS_DEALER : NAV_ITEMS
+  // Only dealer nav is capability-gated; uncapped items (no `capability`) always show. `can` is
+  // permissive while capabilities load, so the nav never flickers or locks out.
+  const navItems = role === 'dealer' ? baseNavItems.filter((item) => can(item.capability)) : baseNavItems
   const panelLabel = role === 'agent' ? 'Agent Panel' : role === 'dealer' ? 'Dealer Panel' : 'Super Admin Panel'
 
   const handleLogout = async () => {

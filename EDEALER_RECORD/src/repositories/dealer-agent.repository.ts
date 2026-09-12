@@ -132,3 +132,66 @@ export async function findAgentById(agentId: string): Promise<Agent | null> {
     where: { agentId },
   });
 }
+
+/** How an agent is authorized to manage a dealer's data (or `null` when not authorized). */
+export type AgentDealerManagementMode = 'placeholder' | 'grant' | null;
+
+/**
+ * Determines whether — and how — an agent may manage a dealer's vehicle/RTO data:
+ * - `'placeholder'`: the dealer is a placeholder the agent owns (independent management).
+ * - `'grant'`: the dealer is a real dealer with an ACTIVE `DealerAgent` grant (either source).
+ * - `null`: the agent is not authorized for this dealer.
+ *
+ * The two modes differ for subscription gating: independent placeholder management requires the
+ * agent's own subscription, whereas a granted real dealer is covered by the dealer's subscription.
+ */
+export async function agentDealerManagementMode(
+  agentId: string,
+  dealerId: string,
+): Promise<AgentDealerManagementMode> {
+  const dealer = await prisma.dealer.findUnique({
+    where: { dealerId },
+    select: { isPlaceholder: true, ownerAgentId: true },
+  });
+  if (dealer?.isPlaceholder && dealer.ownerAgentId === agentId) return 'placeholder';
+
+  const grant = await prisma.dealerAgent.findFirst({
+    where: { dealerId, agentId, status: DealerAgentStatus.ACTIVE },
+  });
+  return grant ? 'grant' : null;
+}
+
+/**
+ * Case-insensitive partial search over agents the dealer could grant access to.
+ *
+ * Matches `q` against email / mobile / whatsapp / agentName / firmName / displayName, and
+ * EXCLUDES agents that are already an ACTIVE grant of the calling dealer (so the results are
+ * only agents the dealer can newly add). Returns a compact agent summary, newest first.
+ *
+ * @param dealerId - The calling dealer (used to exclude already-active grants).
+ * @param q - Search fragment (caller ensures a sensible minimum length).
+ * @param take - Maximum number of results to return.
+ */
+export async function searchGrantableAgents(
+  dealerId: string,
+  q: string,
+  take: number,
+): Promise<DealerAgentGrantAgentSummary[]> {
+  const contains = { contains: q, mode: 'insensitive' as const };
+  return prisma.agent.findMany({
+    where: {
+      dealerAgents: { none: { dealerId, status: DealerAgentStatus.ACTIVE } },
+      OR: [
+        { emailId: contains },
+        { mobileNo: contains },
+        { whatsappNo: contains },
+        { agentName: contains },
+        { firmName: contains },
+        { displayName: contains },
+      ],
+    },
+    select: agentSummarySelect,
+    orderBy: { createdAt: 'desc' },
+    take,
+  });
+}

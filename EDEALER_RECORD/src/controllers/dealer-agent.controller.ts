@@ -1,11 +1,17 @@
 import type { Request, Response } from 'express';
 import { StatusCodes } from 'http-status-codes';
-import { grantAgent, listGrants, revokeGrant } from '../services/dealer-agent.service';
+import {
+  grantAgent,
+  listGrants,
+  revokeGrant,
+  searchGrantableAgents,
+} from '../services/dealer-agent.service';
 import { sendSuccess } from '../utils/api-response';
 import { resolveDealerIdFromRequest } from '../utils/dealer-scope';
 import type {
   CreateDealerAgentBody,
   DealerAgentIdParams,
+  SearchDealerAgentsQuery,
 } from '../validations/dealer-agent.validation';
 
 /**
@@ -17,6 +23,17 @@ export async function grantAgentHandler(req: Request, res: Response): Promise<vo
   const dealerId = resolveDealerIdFromRequest(req);
   const result = await grantAgent(dealerId, body.agentId);
   sendSuccess(res, 'Agent access granted', result, StatusCodes.CREATED);
+}
+
+/**
+ * GET /dealer-agents/search?q=
+ * Searches agents the calling dealer could grant (excludes already-active grants).
+ */
+export async function searchDealerAgentsHandler(req: Request, res: Response): Promise<void> {
+  const { q } = req.query as unknown as SearchDealerAgentsQuery;
+  const dealerId = resolveDealerIdFromRequest(req);
+  const items = await searchGrantableAgents(dealerId, q);
+  sendSuccess(res, 'Agent search results', items);
 }
 
 /**

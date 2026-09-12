@@ -95,7 +95,7 @@ const toDealerWiseUploadCategoryDto = (
     categoryName: row.uploadCategory.categoryName,
     orderRank: row.orderRank,
     isRequired: row.isRequired,
-    processApi: row.processApi,
+    processApi: row.uploadCategory.processApi ?? row.processApi,
     isProcess: row.isProcess,
     isViewInStep: row.isViewInStep,
   },
@@ -112,7 +112,7 @@ const toDealerWiseUploadCategoryListEntry = (
   categoryName: row.uploadCategory.categoryName,
   orderRank: row.orderRank,
   isRequired: row.isRequired,
-  processApi: row.processApi,
+  processApi: row.uploadCategory.processApi ?? row.processApi,
   isProcess: row.isProcess,
   isViewInStep: row.isViewInStep,
 });

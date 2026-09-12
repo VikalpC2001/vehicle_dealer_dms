@@ -45,4 +45,20 @@ export const dealerService = {
     const { data } = await api.delete(`/dealers/${id}`)
     return unwrap(data)
   },
+
+  /**
+   * PATCH /dealers/:id/agent-slots — super-admin sets a dealer's active-agent limit.
+   * @param {string} id
+   * @param {{ maxAgents?: number, deltaSlots?: number }} payload
+   */
+  async raiseAgentSlots(id, payload) {
+    const { data } = await api.patch(`/dealers/${id}/agent-slots`, payload)
+    return unwrap(data) // { dealerId, maxAgents, used }
+  },
+
+  /** PATCH /dealers/:id/subscription — super-admin toggles the dealer's subscription. */
+  async setSubscription(id, isSubscribe) {
+    const { data } = await api.patch(`/dealers/${id}/subscription`, { isSubscribe })
+    return unwrap(data) // { id, isSubscribe }
+  },
 }

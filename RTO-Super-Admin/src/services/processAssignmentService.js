@@ -23,9 +23,37 @@ export const processAssignmentService = {
     return asArray(unwrap(data))
   },
 
-  /** POST /process-assignments — assign a process + RTO service to a granted agent. */
-  async create({ processId, agentId, serviceId, note }) {
-    const { data } = await api.post('/process-assignments', { processId, agentId, serviceId, note })
+  /**
+   * POST /process-assignments — assign a process + one or more RTO services to a granted agent
+   * (`serviceIds[]`, one assignment created per service; already-assigned services are skipped). An
+   * optional `cost` records money owed to the agent per service in the khata ledger (posted
+   * atomically); `costDate` sets the ledger entry's book date, `costNote` its description.
+   * @returns {Promise<{ created: object[], skippedServiceIds: string[] }>}
+   */
+  async create({ processId, agentId, serviceIds, note, cost, costDate, costNote }) {
+    const { data } = await api.post('/process-assignments', {
+      processId,
+      agentId,
+      serviceIds,
+      note,
+      cost,
+      costDate,
+      costNote,
+    })
+    return unwrap(data)
+  },
+
+  /**
+   * PATCH /process-assignments/:id/cost — set/change/remove the agent cost in the ledger.
+   * `cost`: a positive number to set, `null` to remove, omitted to keep (edit only date/note).
+   * @returns {Promise<object|null>} the live cost { ledgerEntryId, amount, entryDate, description } or null
+   */
+  async updateCost(assignmentId, { cost, costDate, costNote } = {}) {
+    const body = {}
+    if (cost !== undefined) body.cost = cost
+    if (costDate !== undefined) body.costDate = costDate
+    if (costNote !== undefined) body.costNote = costNote
+    const { data } = await api.patch(`/process-assignments/${assignmentId}/cost`, body)
     return unwrap(data)
   },
 

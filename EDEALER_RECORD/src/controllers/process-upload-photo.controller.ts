@@ -9,7 +9,7 @@ import {
   deleteProcessUploadPhoto,
 } from '../services/process-upload-photo.service';
 import { sendSuccess } from '../utils/api-response';
-import { resolveDealerIdFromRequest } from '../utils/dealer-scope';
+import { resolveManagedDealerId } from '../utils/managed-dealer-scope';
 import type {
   CreateProcessUploadPhotoBody,
   BulkCreateProcessUploadPhotosBody,
@@ -23,7 +23,7 @@ import type {
 export async function createProcessUploadPhotoHandler(req: Request, res: Response): Promise<void> {
   const body = req.body as CreateProcessUploadPhotoBody;
   const { dealerId: bodyDealerId, ...rest } = body;
-  const dealerId = resolveDealerIdFromRequest(req, bodyDealerId);
+  const dealerId = await resolveManagedDealerId(req, bodyDealerId, { gateSubscription: false });
   const row = await createProcessUploadPhoto(dealerId, rest);
   sendSuccess(res, 'Process upload photo created', row, StatusCodes.CREATED);
 }
@@ -37,7 +37,7 @@ export async function bulkCreateProcessUploadPhotosHandler(
 ): Promise<void> {
   const body = req.body as BulkCreateProcessUploadPhotosBody;
   const { dealerId: bodyDealerId, items } = body;
-  const dealerId = resolveDealerIdFromRequest(req, bodyDealerId);
+  const dealerId = await resolveManagedDealerId(req, bodyDealerId, { gateSubscription: false });
   const rows = await createManyProcessUploadPhotos(dealerId, items);
   sendSuccess(res, 'Process upload photos created', { items: rows }, StatusCodes.CREATED);
 }
@@ -47,7 +47,7 @@ export async function bulkCreateProcessUploadPhotosHandler(
  */
 export async function listProcessUploadPhotosHandler(req: Request, res: Response): Promise<void> {
   const q = req.query as { processId: string; dealerId?: string };
-  const dealerId = resolveDealerIdFromRequest(req, q.dealerId);
+  const dealerId = await resolveManagedDealerId(req, q.dealerId, { gateSubscription: false });
   const items = await listProcessUploadPhotosByProcess(dealerId, q.processId);
   sendSuccess(res, 'Process upload photos retrieved', items);
 }
@@ -58,7 +58,7 @@ export async function listProcessUploadPhotosHandler(req: Request, res: Response
 export async function getProcessUploadPhotoByIdHandler(req: Request, res: Response): Promise<void> {
   const { id } = req.params as unknown as ProcessUploadPhotoIdParams;
   const q = req.query as { dealerId?: string };
-  const dealerId = resolveDealerIdFromRequest(req, q.dealerId);
+  const dealerId = await resolveManagedDealerId(req, q.dealerId, { gateSubscription: false });
   const row = await getProcessUploadPhotoById(dealerId, id);
   sendSuccess(res, 'Process upload photo retrieved', row);
 }
@@ -70,7 +70,7 @@ export async function updateProcessUploadPhotoHandler(req: Request, res: Respons
   const { id } = req.params as unknown as ProcessUploadPhotoIdParams;
   const body = req.body as UpdateProcessUploadPhotoBody;
   const q = req.query as { dealerId?: string };
-  const dealerId = resolveDealerIdFromRequest(req, q.dealerId);
+  const dealerId = await resolveManagedDealerId(req, q.dealerId, { gateSubscription: false });
   const row = await updateProcessUploadPhoto(dealerId, id, body);
   sendSuccess(res, 'Process upload photo updated', row);
 }
@@ -81,7 +81,7 @@ export async function updateProcessUploadPhotoHandler(req: Request, res: Respons
 export async function deleteProcessUploadPhotoHandler(req: Request, res: Response): Promise<void> {
   const { id } = req.params as unknown as ProcessUploadPhotoIdParams;
   const q = req.query as { dealerId?: string };
-  const dealerId = resolveDealerIdFromRequest(req, q.dealerId);
+  const dealerId = await resolveManagedDealerId(req, q.dealerId, { gateSubscription: false });
   await deleteProcessUploadPhoto(dealerId, id);
   sendSuccess(res, 'Process upload photo deleted', {});
 }

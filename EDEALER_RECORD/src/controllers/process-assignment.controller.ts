@@ -1,9 +1,10 @@
 import type { Request, Response } from 'express';
 import { StatusCodes } from 'http-status-codes';
 import {
-  createAssignment,
+  createAssignments,
   listAssignmentsForProcess,
   cancelAssignment,
+  updateAssignmentCost,
   listAssignmentsForAgent,
   getAssignmentDetailForAgent,
   loadAssignmentForAgent,
@@ -17,6 +18,8 @@ import type {
   CreateAssignmentBody,
   ListAssignmentsQuery,
   AssignmentIdParams,
+  UpdateAssignmentCostParams,
+  UpdateAssignmentCostBody,
   AgentAssignmentsQuery,
   UpdateAgentStatusParams,
   UpdateAgentStatusBody,
@@ -24,19 +27,40 @@ import type {
 
 /**
  * POST /process-assignments
- * Assigns a vehicle process + chosen RTO service to a granted agent (dealer-scoped).
+ * Assigns a vehicle process + one or more RTO services to a granted agent (dealer-scoped). One
+ * assignment is created per service; already-assigned services are skipped.
  */
 export async function createAssignmentHandler(req: Request, res: Response): Promise<void> {
   const body = req.body as CreateAssignmentBody;
   const dealerId = resolveDealerIdFromRequest(req);
-  const assignment = await createAssignment(dealerId, {
+  const result = await createAssignments(dealerId, {
     processId: body.processId,
     agentId: body.agentId,
-    serviceId: body.serviceId,
+    serviceIds: body.serviceIds,
     note: body.note ?? null,
     assignedByUserId: req.user.sub,
+    cost: body.cost ?? null,
+    costDate: body.costDate ?? null,
+    costNote: body.costNote ?? null,
   });
-  sendSuccess(res, 'Process assignment created', assignment, StatusCodes.CREATED);
+  sendSuccess(res, 'Process assignment created', result, StatusCodes.CREATED);
+}
+
+/**
+ * PATCH /process-assignments/:id/cost
+ * Sets/changes/removes the agent cost recorded in the ledger for an assignment (dealer-scoped).
+ */
+export async function updateAssignmentCostHandler(req: Request, res: Response): Promise<void> {
+  const { id } = req.params as unknown as UpdateAssignmentCostParams;
+  const body = req.body as UpdateAssignmentCostBody;
+  const dealerId = resolveDealerIdFromRequest(req);
+  const cost = await updateAssignmentCost(dealerId, id, {
+    cost: body.cost,
+    costDate: body.costDate,
+    costNote: body.costNote,
+    userId: req.user.sub,
+  });
+  sendSuccess(res, 'Assignment cost updated', cost);
 }
 
 /**

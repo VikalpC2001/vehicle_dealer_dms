@@ -4,6 +4,7 @@ export const createUploadCategorySchema = z.object({
   body: z.object({
     categoryName: z.string().min(1, 'Category name is required').max(255),
     bothSide: z.boolean(),
+    processApi: z.string().max(512).nullish(),
   }),
 });
 
@@ -14,6 +15,7 @@ export const updateUploadCategorySchema = z.object({
   body: z.object({
     categoryName: z.string().min(1, 'Category name is required').max(255),
     bothSide: z.boolean(),
+    processApi: z.string().max(512).nullish(),
   }),
 });
 

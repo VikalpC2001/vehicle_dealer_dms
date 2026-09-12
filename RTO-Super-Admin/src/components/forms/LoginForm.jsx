@@ -9,8 +9,10 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Checkbox } from '@/components/ui/checkbox'
+import { EmailOtpStep } from '@/components/forms/EmailOtpStep'
 import { useAuth } from '@/context/AuthContext'
 import { authService } from '@/services/authService'
+import { getErrorCode } from '@/lib/authErrors'
 import { homeForRole } from '@/lib/constants'
 import { toast } from '@/hooks/use-toast'
 
@@ -22,7 +24,8 @@ const loginSchema = z.object({
 
 export function LoginForm() {
   const [showPassword, setShowPassword] = useState(false)
-  const { login, loading } = useAuth()
+  const [verifyEmail, setVerifyEmail] = useState(null) // set when login hits "email not verified" (4031)
+  const { login, applySession, loading } = useAuth()
   const navigate = useNavigate()
 
   const { register, handleSubmit, setValue, watch, formState: { errors } } = useForm({
@@ -38,12 +41,34 @@ export function LoginForm() {
       toast({ title: 'Welcome back!', description: 'You have successfully logged in.', variant: 'success' })
       navigate(homeForRole(result?.user?.role))
     } catch (err) {
-      toast({
-        title: 'Login failed',
-        description: authService.getErrorMessage(err),
-        variant: 'destructive',
-      })
+      // Registered but never verified (e.g. closed the browser before the OTP step) → let them finish.
+      if (getErrorCode(err) === 4031) {
+        setVerifyEmail(data.email)
+        toast({ title: 'Verify your email', description: 'We sent a fresh code to your email.', variant: 'success' })
+        return
+      }
+      toast({ title: 'Login failed', description: authService.getErrorMessage(err), variant: 'destructive' })
     }
+  }
+
+  // After the recovered email verification: sign in, then route by approval state.
+  const handleVerified = (raw) => {
+    const session = applySession(raw)
+    const approved = session.user?.approvalStatus === 'APPROVED'
+    navigate(approved ? homeForRole(session.user?.role) : '/pending-approval', { replace: true })
+  }
+
+  if (verifyEmail) {
+    return (
+      <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="w-full max-w-md">
+        <EmailOtpStep
+          email={verifyEmail}
+          autoResend
+          onVerified={handleVerified}
+          onBack={() => setVerifyEmail(null)}
+        />
+      </motion.div>
+    )
   }
 
   return (
@@ -102,8 +127,8 @@ export function LoginForm() {
         </Button>
 
         <div className="text-center text-sm text-muted-foreground">
-          Don&apos;t have an account?{' '}
-          <Link to="/register" className="text-primary font-medium hover:underline">Register</Link>
+          Want to join as a dealer or agent?{' '}
+          <Link to="/register" className="text-primary font-medium hover:underline">Register here</Link>
         </div>
 
         <Button variant="ghost" className="w-full" asChild>

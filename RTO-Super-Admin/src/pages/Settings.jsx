@@ -1,5 +1,4 @@
 import { useState } from 'react'
-import { motion } from 'framer-motion'
 import { Save } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -7,11 +6,21 @@ import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Tabs } from '@/components/ui/tabs'
+import { AnimatedTabsList, AnimatedTabPanel } from '@/components/common/AnimatedTabs'
 import { toast } from '@/hooks/use-toast'
 import { APP_NAME } from '@/lib/constants'
 
+const TABS = [
+  { value: 'general', label: 'General' },
+  { value: 'email', label: 'Email' },
+  { value: 'notifications', label: 'Notifications' },
+  { value: 'security', label: 'Security' },
+  { value: 'system', label: 'System' },
+]
+
 export default function Settings() {
+  const [tab, setTab] = useState('general')
   const [brandName, setBrandName] = useState(APP_NAME)
   const [emailNotifications, setEmailNotifications] = useState(true)
   const [pushNotifications, setPushNotifications] = useState(true)
@@ -29,41 +38,33 @@ export default function Settings() {
         <p className="text-muted-foreground mt-1">Manage your platform configuration</p>
       </div>
 
-      <Tabs defaultValue="general">
-        <TabsList className="flex-wrap h-auto">
-          <TabsTrigger value="general">General</TabsTrigger>
-          <TabsTrigger value="email">Email</TabsTrigger>
-          <TabsTrigger value="notifications">Notifications</TabsTrigger>
-          <TabsTrigger value="security">Security</TabsTrigger>
-          <TabsTrigger value="system">System</TabsTrigger>
-        </TabsList>
+      <Tabs value={tab} onValueChange={setTab}>
+        <AnimatedTabsList tabs={TABS} value={tab} layoutId="admin-settings-tab" />
 
-        <TabsContent value="general">
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">General Settings</CardTitle>
-                <CardDescription>Configure basic platform information</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="space-y-2">
-                  <Label>Brand Name</Label>
-                  <Input value={brandName} onChange={(e) => setBrandName(e.target.value)} />
-                </div>
-                <div className="space-y-2">
-                  <Label>Support Email</Label>
-                  <Input defaultValue="support@rto.gov.in" type="email" />
-                </div>
-                <div className="space-y-2">
-                  <Label>Default Timezone</Label>
-                  <Input defaultValue="Asia/Kolkata" />
-                </div>
-              </CardContent>
-            </Card>
-          </motion.div>
-        </TabsContent>
+        <AnimatedTabPanel value="general">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">General Settings</CardTitle>
+              <CardDescription>Configure basic platform information</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label>Brand Name</Label>
+                <Input value={brandName} onChange={(e) => setBrandName(e.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label>Support Email</Label>
+                <Input defaultValue="support@rto.gov.in" type="email" />
+              </div>
+              <div className="space-y-2">
+                <Label>Default Timezone</Label>
+                <Input defaultValue="Asia/Kolkata" />
+              </div>
+            </CardContent>
+          </Card>
+        </AnimatedTabPanel>
 
-        <TabsContent value="email">
+        <AnimatedTabPanel value="email">
           <Card>
             <CardHeader>
               <CardTitle className="text-base">Email Settings</CardTitle>
@@ -78,9 +79,9 @@ export default function Settings() {
               </div>
             </CardContent>
           </Card>
-        </TabsContent>
+        </AnimatedTabPanel>
 
-        <TabsContent value="notifications">
+        <AnimatedTabPanel value="notifications">
           <Card>
             <CardHeader>
               <CardTitle className="text-base">Notification Settings</CardTitle>
@@ -103,9 +104,9 @@ export default function Settings() {
               ))}
             </CardContent>
           </Card>
-        </TabsContent>
+        </AnimatedTabPanel>
 
-        <TabsContent value="security">
+        <AnimatedTabPanel value="security">
           <Card>
             <CardHeader>
               <CardTitle className="text-base">Security Settings</CardTitle>
@@ -130,9 +131,9 @@ export default function Settings() {
               </div>
             </CardContent>
           </Card>
-        </TabsContent>
+        </AnimatedTabPanel>
 
-        <TabsContent value="system">
+        <AnimatedTabPanel value="system">
           <Card>
             <CardHeader>
               <CardTitle className="text-base">System Preferences</CardTitle>
@@ -144,7 +145,7 @@ export default function Settings() {
               <div className="space-y-2"><Label>Data Retention (days)</Label><Input defaultValue="365" type="number" className="w-32" /></div>
             </CardContent>
           </Card>
-        </TabsContent>
+        </AnimatedTabPanel>
       </Tabs>
 
       <Button onClick={handleSave}>

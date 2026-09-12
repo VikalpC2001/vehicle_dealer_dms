@@ -32,28 +32,35 @@ const isValidPrice = (v) => v.trim() === '' || /^\d+(\.\d{1,2})?$/.test(v.trim()
  *
  * @param {object} props
  * @param {string} props.processId
+ * @param {string} [props.dealerId] - Managed dealer scope when an agent edits a placeholder's process.
  */
-export function DealPricePanel({ processId }) {
+export function DealPricePanel({ processId, dealerId }) {
   const queryClient = useQueryClient()
   const [editing, setEditing] = useState(false)
   const [purchase, setPurchase] = useState('')
   const [sale, setSale] = useState('')
 
+  // getById + updateDeal are authorized for a managing agent via the process's own dealer
+  // (assertManagedDealerMatches), so they need no dealerId. Only the expenses read is dealer-scoped.
   const { data: process, isLoading } = useQuery({
     queryKey: ['vehicle-process', processId],
     queryFn: () => vehicleProcessService.getById(processId),
     enabled: Boolean(processId),
   })
 
-  const persons = process?.persons ?? []
-  const hasSeller = persons.some((p) => p.personType === 'SELLER')
-  const hasBuyer = persons.some((p) => p.personType === 'BUYER')
   // Shared query with ExpensesPanel → adding/removing an expense there refreshes net profit here.
   const { data: expenses = [] } = useQuery({
     queryKey: ['process-expenses', processId],
-    queryFn: () => processExpenseService.getByProcess(processId),
+    queryFn: () => processExpenseService.getByProcess(processId, dealerId),
     enabled: Boolean(processId),
   })
+
+  // A price can only be set when its counterparty exists (purchase↔seller, sale↔buyer) — the same
+  // invariant `buildProcessPatch` enforces (it silently drops an orphan price). Gate the inputs so a
+  // price is never entered-then-dropped with a false "saved" confirmation.
+  const persons = process?.persons ?? []
+  const hasSeller = persons.some((p) => p.personType === 'SELLER')
+  const hasBuyer = persons.some((p) => p.personType === 'BUYER')
 
   // Round money to whole cents before any sign test/display so binary float drift
   // (e.g. 1000.30 − 1000.00 = 0.2999…) can't paint a break-even deal red or flip a sign.
@@ -76,6 +83,9 @@ export function DealPricePanel({ processId }) {
       queryClient.invalidateQueries({ queryKey: ['vehicle-process', processId] })
       queryClient.invalidateQueries({ queryKey: ['vehicle-process', processId, 'details'] })
       queryClient.invalidateQueries({ queryKey: ['vehicle-processes'] })
+      // Prices feed the Vehicle History summary (gross-margin / net-profit) — refresh it so the
+      // History tab updates without a page reload (queries have a 5-min staleTime).
+      queryClient.invalidateQueries({ queryKey: ['vehicle-history'] })
       toast({ title: 'Deal updated', variant: 'success' })
       setEditing(false)
     },

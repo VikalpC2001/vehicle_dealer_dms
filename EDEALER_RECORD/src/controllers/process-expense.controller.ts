@@ -8,7 +8,7 @@ import {
   deleteProcessExpense,
 } from '../services/process-expense.service';
 import { sendSuccess } from '../utils/api-response';
-import { resolveDealerIdFromRequest } from '../utils/dealer-scope';
+import { resolveManagedDealerId } from '../utils/managed-dealer-scope';
 import type {
   CreateProcessExpenseBody,
   UpdateProcessExpenseBody,
@@ -20,7 +20,7 @@ import type {
  */
 export async function createProcessExpenseHandler(req: Request, res: Response): Promise<void> {
   const body = req.body as CreateProcessExpenseBody;
-  const dealerId = resolveDealerIdFromRequest(req, body.dealerId);
+  const dealerId = await resolveManagedDealerId(req, body.dealerId, { gateSubscription: false });
   const expense = await createProcessExpense(dealerId, {
     processId: body.processId,
     label: body.label,
@@ -35,7 +35,7 @@ export async function createProcessExpenseHandler(req: Request, res: Response): 
  */
 export async function listProcessExpensesHandler(req: Request, res: Response): Promise<void> {
   const q = req.query as { processId: string; dealerId?: string };
-  const dealerId = resolveDealerIdFromRequest(req, q.dealerId);
+  const dealerId = await resolveManagedDealerId(req, q.dealerId, { gateSubscription: false });
   const items = await listProcessExpensesByProcess(dealerId, q.processId);
   sendSuccess(res, 'Expenses retrieved', items);
 }
@@ -45,7 +45,8 @@ export async function listProcessExpensesHandler(req: Request, res: Response): P
  */
 export async function getProcessExpenseByIdHandler(req: Request, res: Response): Promise<void> {
   const { id } = req.params as unknown as ProcessExpenseIdParams;
-  const dealerId = resolveDealerIdFromRequest(req);
+  const q = req.query as { dealerId?: string };
+  const dealerId = await resolveManagedDealerId(req, q.dealerId, { gateSubscription: false });
   const expense = await getProcessExpenseById(dealerId, id);
   sendSuccess(res, 'Expense retrieved', expense);
 }
@@ -56,7 +57,7 @@ export async function getProcessExpenseByIdHandler(req: Request, res: Response):
 export async function updateProcessExpenseHandler(req: Request, res: Response): Promise<void> {
   const { id } = req.params as unknown as ProcessExpenseIdParams;
   const body = req.body as UpdateProcessExpenseBody;
-  const dealerId = resolveDealerIdFromRequest(req, body.dealerId);
+  const dealerId = await resolveManagedDealerId(req, body.dealerId, { gateSubscription: false });
   const expense = await updateProcessExpense(dealerId, id, {
     label: body.label,
     amount: body.amount,
@@ -70,7 +71,8 @@ export async function updateProcessExpenseHandler(req: Request, res: Response): 
  */
 export async function deleteProcessExpenseHandler(req: Request, res: Response): Promise<void> {
   const { id } = req.params as unknown as ProcessExpenseIdParams;
-  const dealerId = resolveDealerIdFromRequest(req);
+  const q = req.query as { dealerId?: string };
+  const dealerId = await resolveManagedDealerId(req, q.dealerId, { gateSubscription: false });
   await deleteProcessExpense(dealerId, id);
   sendSuccess(res, 'Expense deleted', {});
 }

@@ -29,6 +29,17 @@ export interface JwtPayload {
    * token's `role` is `USER`. A super-admin has neither a `dealerId` nor an `agentId`.
    */
   readonly isSuperAdmin?: boolean;
+  /**
+   * Whether the user's `DealerWiseUser` link is the dealership OWNER (full access, manages roles).
+   * Only meaningful for dealer users; `false`/absent for agents, unlinked signups, and super-admins.
+   * A convenience hint for the FE — the authoritative check is the fresh capability resolver.
+   */
+  readonly isDealerOwner?: boolean;
+  /**
+   * Self-registration approval state of the linked dealer/agent firm. Absent/`APPROVED` = full
+   * access; `PENDING`/`REJECTED` self-registrations are blocked from non-auth routes until approved.
+   */
+  readonly approvalStatus?: 'PENDING' | 'APPROVED' | 'REJECTED';
   /** `ACCESS` for normal API use; `PASSWORD_RESET` only for POST /auth/reset-password; `REFRESH` only for POST /auth/refresh. */
   readonly purpose?: 'ACCESS' | 'PASSWORD_RESET' | 'REFRESH';
   readonly iat?: number;

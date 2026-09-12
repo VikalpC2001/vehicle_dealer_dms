@@ -1,5 +1,5 @@
-import { useEffect } from 'react'
-import { useForm } from 'react-hook-form'
+import { useMemo } from 'react'
+import { useForm, Controller } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { Loader2 } from 'lucide-react'
@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
+import { StateCitySelect } from '@/components/common/StateCitySelect'
 import { parseValidationErrors } from '@/lib/authErrors'
 
 const optionalPincode = z.string().refine((val) => val === '' || /^\d{6}$/.test(val), {
@@ -55,24 +56,23 @@ export const defaultAgentValues = {
  * @param {string} [props.submitLabel]
  */
 export function AgentForm({ defaultValues, onSubmit, loading, submitLabel = 'Save Agent' }) {
+  // `values` reactively syncs the form (incl. Controller-bound state/city) to `defaultValues`.
+  const formValues = useMemo(() => ({ ...defaultAgentValues, ...defaultValues }), [defaultValues])
+
   const {
     register,
     handleSubmit,
     setValue,
     watch,
-    reset,
     setError,
+    control,
     formState: { errors },
   } = useForm({
     resolver: zodResolver(agentSchema),
-    defaultValues: { ...defaultAgentValues, ...defaultValues },
+    values: formValues,
   })
 
   const isSubscribe = watch('isSubscribe')
-
-  useEffect(() => {
-    reset({ ...defaultAgentValues, ...defaultValues })
-  }, [defaultValues, reset])
 
   const handleFormSubmit = async (values) => {
     try {
@@ -113,12 +113,26 @@ export function AgentForm({ defaultValues, onSubmit, loading, submitLabel = 'Sav
       </Field>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Field label="City" id="city" error={errors.city?.message}>
-          <Input id="city" placeholder="Mumbai" {...register('city')} />
-        </Field>
-        <Field label="State" id="state" error={errors.state?.message}>
-          <Input id="state" placeholder="Maharashtra" {...register('state')} />
-        </Field>
+        <Controller
+          control={control}
+          name="state"
+          render={({ field: stateField }) => (
+            <Controller
+              control={control}
+              name="city"
+              render={({ field: cityField }) => (
+                <StateCitySelect
+                  stateValue={stateField.value || ''}
+                  cityValue={cityField.value || ''}
+                  onStateChange={stateField.onChange}
+                  onCityChange={cityField.onChange}
+                  stateError={errors.state?.message}
+                  cityError={errors.city?.message}
+                />
+              )}
+            />
+          )}
+        />
         <Field label="Pincode" id="pincode" error={errors.pincode?.message}>
           <Input id="pincode" placeholder="400001" maxLength={6} {...register('pincode')} />
         </Field>

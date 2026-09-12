@@ -27,6 +27,21 @@ export function AuthProvider({ children }) {
     }
   }, [])
 
+  // Hydrate auth state from a token bundle obtained outside the login flow (agent onboarding).
+  const applySession = useCallback((data) => {
+    const result = authService.setSession(data)
+    setUser(result.user)
+    return result
+  }, [])
+
+  // Re-read the linked firm's approval state (used by the pending-approval screen). Once APPROVED
+  // the access token is rotated so app routes unlock. Returns the fresh user.
+  const refreshUser = useCallback(async () => {
+    const updated = await authService.refreshApproval()
+    if (updated) setUser(updated)
+    return updated
+  }, [])
+
   const logout = useCallback(async () => {
     await authService.logout()
     setUser(null)
@@ -35,7 +50,7 @@ export function AuthProvider({ children }) {
   const isAuthenticated = !!user && authService.isAuthenticated()
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, register, logout, isAuthenticated }}>
+    <AuthContext.Provider value={{ user, loading, login, register, applySession, refreshUser, logout, isAuthenticated }}>
       {children}
     </AuthContext.Provider>
   )

@@ -136,6 +136,30 @@
     {
       "key": "ledgerEntryId",
       "value": ""
+    },
+    {
+      "key": "oldAgentId",
+      "value": ""
+    },
+    {
+      "key": "newAgentId",
+      "value": ""
+    },
+    {
+      "key": "invitationId",
+      "value": ""
+    },
+    {
+      "key": "acceptToken",
+      "value": ""
+    },
+    {
+      "key": "awucId",
+      "value": ""
+    },
+    {
+      "key": "dealerRoleId",
+      "value": ""
     }
   ],
   "item": [
@@ -631,10 +655,10 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"categoryName\": \"RC Documents\",\n  \"bothSide\": false\n}"
+              "raw": "{\n  \"categoryName\": \"RC Documents\",\n  \"bothSide\": false,\n  \"processApi\": \"ai/analyze-id-proof\"\n}"
             },
             "url": "{{baseUrl}}/api/v1/upload-categories",
-            "description": "categoryName, bothSide required; orderRank is max+1 server-side."
+            "description": "categoryName, bothSide required; orderRank is max+1 server-side. Super-admin only."
           }
         },
         {
@@ -661,7 +685,7 @@
               "raw": "[\n  { \"categoryId\": \"{{uploadCategoryId}}\", \"categoryName\": \"RC Documents\", \"orderRank\": 1 }\n]"
             },
             "url": "{{baseUrl}}/api/v1/upload-categories/order",
-            "description": "Replace categoryIds with real UUIDs. categoryName optional (ignored)."
+            "description": "Replace categoryIds with real UUIDs. categoryName optional (ignored). Super-admin only."
           }
         },
         {
@@ -685,10 +709,10 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"categoryName\": \"RC Documents Updated\",\n  \"bothSide\": true\n}"
+              "raw": "{\n  \"categoryName\": \"RC Documents Updated\",\n  \"bothSide\": true,\n  \"processApi\": \"ai/analyze-id-proof\"\n}"
             },
             "url": "{{baseUrl}}/api/v1/upload-categories/{{uploadCategoryId}}",
-            "description": "categoryName, bothSide required."
+            "description": "categoryName, bothSide required. Super-admin only."
           }
         },
         {
@@ -697,7 +721,7 @@
             "method": "DELETE",
             "header": [],
             "url": "{{baseUrl}}/api/v1/upload-categories/{{uploadCategoryId}}",
-            "description": "Delete by id."
+            "description": "Delete by id. Super-admin only."
           }
         }
       ]
@@ -936,6 +960,145 @@
       ]
     },
     {
+      "name": "Dealer Roles & Permissions",
+      "auth": {
+        "type": "bearer",
+        "bearer": [
+          {
+            "key": "token",
+            "value": "{{token}}",
+            "type": "string"
+          }
+        ]
+      },
+      "item": [
+        {
+          "name": "Get capability catalog",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/dealer-roles/capabilities",
+            "description": "Curated capability catalog for the FE checklist. Any authenticated dealer user."
+          }
+        },
+        {
+          "name": "My effective capabilities",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/dealer-roles/me",
+            "description": "{ isOwner, capabilities } resolved fresh for the caller. Any authenticated dealer user."
+          }
+        },
+        {
+          "name": "List roles",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200 || pm.response.code === 201) {",
+                  "  const json = pm.response.json();",
+                  "  const role = json.data && (Array.isArray(json.data) ? json.data[0] : json.data);",
+                  "  if (role && role.roleId) {",
+                  "    pm.collectionVariables.set('dealerRoleId', role.roleId);",
+                  "  }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/dealer-roles",
+            "description": "Dealer's roles with member counts. Gated by roles.manage (owner passes). Optional ?dealerId= for super-admin."
+          }
+        },
+        {
+          "name": "Create role",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200 || pm.response.code === 201) {",
+                  "  const json = pm.response.json();",
+                  "  const role = json.data && (Array.isArray(json.data) ? json.data[0] : json.data);",
+                  "  if (role && role.roleId) {",
+                  "    pm.collectionVariables.set('dealerRoleId', role.roleId);",
+                  "  }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"roleName\": \"Front Desk\",\n  \"capabilities\": [\n    \"processes.view\",\n    \"tasks.viewAll\"\n  ]\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/dealer-roles",
+            "description": "Create a role. Gated by roles.manage. capabilities[] must be catalog keys. Duplicate roleName -> 4090."
+          }
+        },
+        {
+          "name": "Update role",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"roleName\": \"Front Desk (Sr.)\",\n  \"capabilities\": [\n    \"processes.view\",\n    \"processes.manage\",\n    \"tasks.viewAll\"\n  ]\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/dealer-roles/{{dealerRoleId}}",
+            "description": "Update roleName and/or capabilities. Gated by roles.manage."
+          }
+        },
+        {
+          "name": "Assign role to user",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{userId}}\",\n  \"roleId\": \"{{dealerRoleId}}\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/dealer-roles/assign",
+            "description": "Set a dealer employee's roleId (roleId:null clears to the read-only default). Gated by roles.manage."
+          }
+        },
+        {
+          "name": "Delete role",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/dealer-roles/{{dealerRoleId}}",
+            "description": "Delete a role. Members drop to the read-only default (roleId -> null). Gated by roles.manage."
+          }
+        }
+      ]
+    },
+    {
       "name": "Dealers",
       "auth": {
         "type": "bearer",
@@ -1010,11 +1173,47 @@
             "url": "{{baseUrl}}/api/v1/dealers/{{dealerId}}",
             "description": "Delete a dealer by ID."
           }
+        },
+        {
+          "name": "Set Agent Slots (super-admin)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/dealers/{{dealerId}}/agent-slots",
+            "description": "Super-admin only. Raise a dealer's active-agent cap (maxAgents). Provide exactly one of maxAgents | deltaSlots.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"maxAgents\": 3\n}"
+            }
+          }
+        },
+        {
+          "name": "Set Dealer Subscription (super-admin)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"isSubscribe\": true\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/dealers/{{dealerId}}/subscription",
+            "description": "Super-admin toggles a dealer's isSubscribe (subscribed dealers get the dealer site + can be a connect target)."
+          }
         }
       ]
     },
     {
-      "name": "Dealer Statuses",
+      "name": "Dealer Task Statuses",
       "auth": {
         "type": "bearer",
         "bearer": [
@@ -1027,7 +1226,7 @@
       },
       "item": [
         {
-          "name": "Sync Dealer Statuses",
+          "name": "Sync Dealer Task Statuses",
           "request": {
             "method": "POST",
             "header": [
@@ -1038,14 +1237,14 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"statusData\": [\n    { \"statusId\": \"{{statusId}}\", \"statusName\": \"TO-DO\", \"colour\": \"blue\" },\n    { \"statusName\": \"Pending\", \"colour\": \"Red\" }\n  ]\n}"
+              "raw": "{\n  \"statusData\": [\n    { \"statusId\": \"{{taskStatusId}}\", \"statusName\": \"TO-DO\", \"colour\": \"blue\", \"isDone\": false },\n    { \"statusName\": \"In Progress\", \"colour\": \"Yellow\", \"isDone\": false },\n    { \"statusName\": \"Complete\", \"colour\": \"green\", \"isDone\": true }\n  ]\n}"
             },
-            "url": "{{baseUrl}}/api/v1/dealer-statuses",
-            "description": "Sync statuses for the JWT dealer (optional dealerId in body for ADMIN only)."
+            "url": "{{baseUrl}}/api/v1/dealer-task-statuses",
+            "description": "Sync task-board statuses for the JWT dealer (optional dealerId in body for ADMIN only). Each item carries an isDone flag; array order sets statusRank."
           }
         },
         {
-          "name": "Update Dealer Status Order",
+          "name": "Update Dealer Task Status Order",
           "request": {
             "method": "PUT",
             "header": [
@@ -1056,28 +1255,175 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"items\": [\n    { \"statusId\": \"{{statusId}}\", \"statusRank\": 1 },\n    { \"statusId\": \"<another-status-id>\", \"statusRank\": 2 }\n  ]\n}"
+              "raw": "{\n  \"items\": [\n    { \"statusId\": \"{{taskStatusId}}\", \"statusRank\": 1 },\n    { \"statusId\": \"<another-status-id>\", \"statusRank\": 2 }\n  ]\n}"
             },
-            "url": "{{baseUrl}}/api/v1/dealer-statuses/order",
-            "description": "Reorder statuses for JWT dealer (optional dealerId for ADMIN). Body: { items: [{ statusId, statusRank }] }."
+            "url": "{{baseUrl}}/api/v1/dealer-task-statuses/order",
+            "description": "Reorder task statuses for JWT dealer (optional dealerId for ADMIN). Body: { items: [{ statusId, statusRank }] }."
           }
         },
         {
-          "name": "List Dealer Statuses (JWT dealer)",
+          "name": "List Dealer Task Statuses (JWT dealer)",
           "request": {
             "method": "GET",
             "header": [],
-            "url": "{{baseUrl}}/api/v1/dealer-statuses",
-            "description": "GET /dealer-statuses \u2014 statuses for the dealer in the access token, ordered by statusRank."
+            "url": "{{baseUrl}}/api/v1/dealer-task-statuses",
+            "description": "GET /dealer-task-statuses \u2014 task statuses for the dealer in the access token, ordered by statusRank."
           }
         },
         {
-          "name": "Get Dealer Statuses By Dealer",
+          "name": "Get Dealer Task Statuses By Dealer",
           "request": {
             "method": "GET",
             "header": [],
-            "url": "{{baseUrl}}/api/v1/dealer-statuses/{{dealerId}}",
+            "url": "{{baseUrl}}/api/v1/dealer-task-statuses/{{dealerId}}",
             "description": "Path dealerId must match JWT for non-ADMIN (ADMIN may use any dealer)."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Dealer Task Templates",
+      "auth": {
+        "type": "bearer",
+        "bearer": [
+          {
+            "key": "token",
+            "value": "{{token}}",
+            "type": "string"
+          }
+        ]
+      },
+      "item": [
+        {
+          "name": "Create Dealer Task Template",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"templateName\": \"Name transfer\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/dealer-task-templates",
+            "description": "JWT dealer (optional dealerId for ADMIN). templateName unique per dealer."
+          }
+        },
+        {
+          "name": "List Dealer Task Templates",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/dealer-task-templates?page=1&limit=10",
+            "description": "Paginated list for JWT dealer, ordered by templateName asc (optional &dealerId= for ADMIN)."
+          }
+        },
+        {
+          "name": "Get Dealer Task Template By ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/dealer-task-templates/{{templateId}}",
+            "description": "Get a single dealer task template by ID."
+          }
+        },
+        {
+          "name": "Update Dealer Task Template",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"templateName\": \"Ownership transfer\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/dealer-task-templates/{{templateId}}",
+            "description": "Update an existing dealer task template. templateName must remain unique per dealer."
+          }
+        },
+        {
+          "name": "Delete Dealer Task Template",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/dealer-task-templates/{{templateId}}",
+            "description": "Delete a dealer task template by ID."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Dealer Tags",
+      "auth": {
+        "type": "bearer",
+        "bearer": [
+          {
+            "key": "token",
+            "value": "{{token}}",
+            "type": "string"
+          }
+        ]
+      },
+      "item": [
+        {
+          "name": "List Dealer Tags",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/dealer-tags",
+            "description": "List the resolved dealer's tags, ordered by tagName (agents/super-admin pass ?dealerId=). Returns a plain array."
+          }
+        },
+        {
+          "name": "Create Dealer Tag",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tagName\": \"Urgent\",\n  \"colour\": \"#EF4444\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/dealer-tags",
+            "description": "JWT dealer (optional dealerId for agents/super-admin). tagName unique per dealer; duplicate -> 409 (4090)."
+          }
+        },
+        {
+          "name": "Update Dealer Tag",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tagName\": \"High priority\",\n  \"colour\": \"#F59E0B\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/dealer-tags/{{tagId}}",
+            "description": "Update a tag's name and/or colour. tagName must remain unique per dealer. 4069 not found; 4034/4039 tenancy."
+          }
+        },
+        {
+          "name": "Delete Dealer Tag",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/dealer-tags/{{tagId}}",
+            "description": "Delete a tag by ID. ProcessTag join rows cascade. 4069 not found; 4034/4039 tenancy."
           }
         }
       ]
@@ -1497,7 +1843,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"vehicleId\": \"{{vehicleId}}\",\n  \"status\": \"TO-DO\",\n  \"processDate\": \"2026-03-15T10:30:00.000Z\",\n  \"persons\": [\n    {\n      \"personName\": \"John Seller\",\n      \"address\": null,\n      \"mobileNumber\": \"+919999999999\",\n      \"personType\": \"SELLER\"\n    },\n    {\n      \"personName\": \"Jane Buyer\",\n      \"address\": \"Somewhere, City\",\n      \"mobileNumber\": \"+918888888888\",\n      \"personType\": \"BUYER\"\n    }\n  ]\n}"
+              "raw": "{\n  \"vehicleId\": \"{{vehicleId}}\",\n  \"processDate\": \"2026-03-15T10:30:00.000Z\",\n  \"persons\": [\n    {\n      \"personName\": \"John Seller\",\n      \"address\": null,\n      \"mobileNumber\": \"+919999999999\",\n      \"personType\": \"SELLER\"\n    },\n    {\n      \"personName\": \"Jane Buyer\",\n      \"address\": \"Somewhere, City\",\n      \"mobileNumber\": \"+918888888888\",\n      \"personType\": \"BUYER\"\n    }\n  ]\n}"
             },
             "url": "{{baseUrl}}/api/v1/vehicle-processes",
             "description": "Create a vehicle process and its persons in one request."
@@ -1509,7 +1855,7 @@
             "method": "GET",
             "header": [],
             "url": "{{baseUrl}}/api/v1/vehicle-processes?page=1&limit=50",
-            "description": "List vehicle processes (paginated). Each item includes persons."
+            "description": "List vehicle processes (paginated). Each item includes persons, tags, and status (SOLD/COMPLETE/SCRAP or null=OPEN). Optional &search= filters by vehicle registration number (space/punctuation-insensitive) and any person's name (case-insensitive). Optional &tagId= narrows to a tag. Optional &status= one of SOLD|COMPLETE|SCRAP|OPEN (OPEN = status-less); AND-ed with search/tagId. Agents pass &dealerId= for a managed dealer."
           }
         },
         {
@@ -1542,10 +1888,10 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"vehicleId\": \"{{vehicleId}}\",\n  \"status\": \"In Progress\",\n  \"processDate\": \"2026-03-16T10:30:00.000Z\",\n  \"persons\": [\n    {\n      \"personName\": \"John Seller\",\n      \"address\": null,\n      \"mobileNumber\": \"+919999999999\",\n      \"personType\": \"SELLER\"\n    }\n  ]\n}"
+              "raw": "{\n  \"vehicleId\": \"{{vehicleId}}\",\n  \"processDate\": \"2026-03-16T10:30:00.000Z\",\n  \"persons\": [\n    {\n      \"personName\": \"John Seller\",\n      \"address\": null,\n      \"mobileNumber\": \"+919999999999\",\n      \"personType\": \"SELLER\"\n    }\n  ]\n}"
             },
             "url": "{{baseUrl}}/api/v1/vehicle-processes/{{processId}}",
-            "description": "Update a vehicle process and replace its persons in one request."
+            "description": "Update a vehicle process. `persons` is OPTIONAL \u2014 omit it for a status- or price-only change and persons (incl. CANCELLED buyers kept for history) are left untouched; person management lives in the /persons endpoints (incl. change-buyer). When persons IS sent it is a full replace (non-empty, single seller/buyer). Omitted prices are nulled, so re-send prices to preserve them."
           }
         },
         {
@@ -1555,6 +1901,168 @@
             "header": [],
             "url": "{{baseUrl}}/api/v1/vehicle-processes/{{processId}}",
             "description": "Delete a vehicle process by ID (persons are deleted via cascade)."
+          }
+        },
+        {
+          "name": "List Agent Board Processes (agent)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/vehicle-processes/agent-board",
+            "description": "Agent-scoped. Caller agent's own (agent-created / placeholder-dealer) processes for the agent board, each with agent-kanban status, vehicle reg, source dealer, and tags ([{ tagId, tagName, colour }]). Pairs with GET /process-assignments/agent."
+          }
+        },
+        {
+          "name": "Update Vehicle Process Agent Status (agent board)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"agentStatusId\": \"{{agentStatusId}}\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/vehicle-processes/{{processId}}/agent-status",
+            "description": "Move an agent-created process into one of the owning agent's kanban columns (agent board). Updates agentStatusId only; the dealer-facing status string is untouched. 4234 if not an agent board process or the status is not the agent's."
+          }
+        },
+        {
+          "name": "Set RTO Receipt (agent)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"imageName\": \"{{fileKey}}\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/vehicle-processes/{{processId}}/receipt",
+            "description": "Agent-only. Attach/replace the RTO receipt (PDF/image), first uploaded flat via /upload/generate + PUT. Server moves it into the process folder. Dealer can download it (receipt in details). 4063 if not the agent working this process."
+          }
+        },
+        {
+          "name": "Remove RTO Receipt (agent)",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/vehicle-processes/{{processId}}/receipt",
+            "description": "Agent-only. Clear the RTO receipt (file left on disk). 4063 otherwise."
+          }
+        },
+        {
+          "name": "Set RC-book Tracking Number (agent)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"trackingNumber\": \"IND123456789\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/vehicle-processes/{{processId}}/tracking",
+            "description": "Agent-only. Set/clear the RC-book post/courier tracking number (blank clears). Dealer reads trackingNumber in details. 4063 otherwise."
+          }
+        },
+        {
+          "name": "Set Vehicle Process Status",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"SOLD\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/vehicle-processes/{{processId}}/status",
+            "description": "Set/clear the fixed lifecycle status (SOLD/COMPLETE/SCRAP, or null to reopen=OPEN). Agent-aware scope (optional dealerId). A terminal value is always allowed; sending null is rejected (4113) when another OPEN process already exists for the vehicle under this dealer (at most one open process per vehicle per dealer). 4050 process not found; 4034/4039 tenancy."
+          }
+        },
+        {
+          "name": "Set Vehicle Process Tags",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tagIds\": [\"{{tagId}}\"]\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/vehicle-processes/{{processId}}/tags",
+            "description": "Full-replace the process's tags (empty tagIds clears all). Every tag must belong to the process's dealer. Agent-aware scope (optional dealerId). Returns [{ tagId, tagName, colour }]. 4235 if a tag is not the dealer's; 4050 process not found; 4034/4039 tenancy."
+          }
+        },
+        {
+          "name": "List Process Comments",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/vehicle-processes/{{processId}}/comments",
+            "description": "Shared per-process comment thread (oldest first). Visible to the dealer owner and the assigned/managing agent."
+          }
+        },
+        {
+          "name": "Add Process Comment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"body\": \"Please upload the RC scan.\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/vehicle-processes/{{processId}}/comments",
+            "description": "Post a comment to a process's shared thread. authorUserId/authorRole are derived from the token."
+          }
+        },
+        {
+          "name": "Edit Process Comment",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"body\": \"Updated: RC uploaded, please check.\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/vehicle-processes/{{processId}}/comments/{{commentId}}",
+            "description": "Author-only edit of a comment body. 4062 if you are not the author."
+          }
+        },
+        {
+          "name": "Delete Process Comment",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/vehicle-processes/{{processId}}/comments/{{commentId}}",
+            "description": "Delete a comment. Author may delete their own; super-admin may delete any. 4062 otherwise."
           }
         }
       ]
@@ -1598,10 +2106,42 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"processId\": \"{{processId}}\",\n  \"personName\": \"Jane Buyer\",\n  \"address\": null,\n  \"mobileNumber\": \"+918888888888\",\n  \"personType\": \"BUYER\"\n}"
+              "raw": "{\n  \"processId\": \"{{processId}}\",\n  \"personName\": \"Jane Buyer\",\n  \"address\": null,\n  \"mobileNumber\": \"+918888888888\",\n  \"personType\": \"BUYER\",\n  \"idImageName\": null\n}"
             },
             "url": "{{baseUrl}}/api/v1/persons",
-            "description": "Add a person to a vehicle process. dealerId from JWT; optional body dealerId for ADMIN. processId must belong to that dealer."
+            "description": "Add a person to a vehicle process. dealerId from JWT; optional body dealerId for ADMIN. processId must belong to that dealer. Adding a BUYER while an ACTIVE buyer already exists returns 422 (code 4064) \u2014 use \"Change Buyer\" instead. Optional idImageName (an uploaded fileKey) is stored as the person's ID photo (category 'Buyer ID'/'Seller ID'), relocated into the process folder and linked to them so it shows in the process Documents."
+          }
+        },
+        {
+          "name": "Change Buyer",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const json = pm.response.json();",
+                  "  if (json.data && json.data.personId) pm.collectionVariables.set('personId', json.data.personId);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"processId\": \"{{processId}}\",\n  \"personName\": \"New Buyer\",\n  \"address\": null,\n  \"mobileNumber\": \"+917777777777\",\n  \"buyerIdImageName\": null\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/persons/change-buyer",
+            "description": "Atomically cancel the process's current ACTIVE buyer (soft \u2014 kept for history with their ID photo) and add this new ACTIVE buyer. Optional buyerIdImageName (an uploaded fileKey) is linked to the new buyer as a 'Buyer ID' photo and relocated into the process folder. dealerId from JWT; optional body dealerId for ADMIN. Returns 201 with the new buyer."
           }
         },
         {
@@ -1634,10 +2174,10 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"personName\": \"Jane Buyer Updated\",\n  \"address\": \"City\",\n  \"mobileNumber\": \"+918888888888\",\n  \"personType\": \"BUYER\"\n}"
+              "raw": "{\n  \"personName\": \"Jane Buyer Updated\",\n  \"address\": \"City\",\n  \"mobileNumber\": \"+918888888888\",\n  \"personType\": \"BUYER\",\n  \"idImageName\": null\n}"
             },
             "url": "{{baseUrl}}/api/v1/persons/{{personId}}",
-            "description": "Full replace of mutable fields. Optional ?dealerId= for ADMIN."
+            "description": "Full replace of mutable fields. Optional idImageName (an uploaded fileKey) REPLACES the person's linked ID photo (relocated + linked). Optional ?dealerId= for ADMIN."
           }
         },
         {
@@ -1820,6 +2360,92 @@
           }
         },
         {
+          "name": "Process task board",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/process-tasks/board?mine=false",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "process-tasks",
+                "board"
+              ],
+              "query": [
+                {
+                  "key": "dealerId",
+                  "value": "{{dealerId}}",
+                  "disabled": true
+                },
+                {
+                  "key": "assignUserId",
+                  "value": "{{userId}}",
+                  "disabled": true
+                },
+                {
+                  "key": "mine",
+                  "value": "false"
+                },
+                {
+                  "key": "status",
+                  "value": "In Progress",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Dealer-wide task board across all processes. Returns open tasks plus tasks completed within the last 15 days. Optional filters: dealerId (ADMIN/managing agent), assignUserId, mine (true = the caller's tasks), status."
+          }
+        },
+        {
+          "name": "Process task history",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/process-tasks/history?page=1&limit=10",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "process-tasks",
+                "history"
+              ],
+              "query": [
+                {
+                  "key": "dealerId",
+                  "value": "{{dealerId}}",
+                  "disabled": true
+                },
+                {
+                  "key": "assignUserId",
+                  "value": "{{userId}}",
+                  "disabled": true
+                },
+                {
+                  "key": "mine",
+                  "value": "false",
+                  "disabled": true
+                },
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "10"
+                }
+              ]
+            },
+            "description": "Dealer-wide completed-task history across all processes. All-time (not the 15-day board window), paginated, newest completion first. Optional filters: dealerId (ADMIN/managing agent), assignUserId, mine (true = the caller's tasks). A non-owner dealer user without tasks.viewAll is forced to mine=true."
+          }
+        },
+        {
           "name": "Get process task by id",
           "request": {
             "method": "GET",
@@ -1853,6 +2479,60 @@
             "header": [],
             "url": "{{baseUrl}}/api/v1/process-tasks/{{processTaskId}}",
             "description": "Delete a task row."
+          }
+        },
+        {
+          "name": "List Task Comments",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/process-tasks/{{processTaskId}}/comments",
+            "description": "Shared per-task comment thread (oldest first). Visible to the dealer team (owner + employees) and the managing agent. Optional dealerId query for ADMIN / managing agent."
+          }
+        },
+        {
+          "name": "Add Task Comment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"body\": \"Waiting on the RC scan.\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/process-tasks/{{processTaskId}}/comments",
+            "description": "Post a comment to a task's shared thread. authorUserId/authorRole are derived from the token."
+          }
+        },
+        {
+          "name": "Edit Task Comment",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"body\": \"Updated: RC uploaded, please check.\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/process-tasks/{{processTaskId}}/comments/{{commentId}}",
+            "description": "Author-only edit of a task comment body. 4062 if you are not the author."
+          }
+        },
+        {
+          "name": "Delete Task Comment",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/process-tasks/{{processTaskId}}/comments/{{commentId}}",
+            "description": "Delete a task comment. Author may delete their own; super-admin may delete any. 4062 otherwise."
           }
         }
       ]
@@ -2186,6 +2866,33 @@
           }
         },
         {
+          "name": "Get My Agent Profile (self)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/agents/me",
+            "description": "Agent-scoped. The caller agent's own profile (resolved from the token). 4035 if the token is not linked to an agent."
+          }
+        },
+        {
+          "name": "Update My Agent Profile (self)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"firmName\": \"Speedy RTO Agents\",\n  \"agentName\": \"Speedy Agent\",\n  \"displayName\": \"Speedy RTO\",\n  \"emailId\": \"agent@rto.test\",\n  \"mobileNo\": \"9876500000\",\n  \"city\": \"Ahmedabad\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/agents/me",
+            "description": "Agent edits their own profile. isSubscribe is NOT accepted here (preserved server-side; super-admin's). 4035 if not an agent."
+          }
+        },
+        {
           "name": "Get Agent By ID",
           "request": {
             "method": "GET",
@@ -2219,6 +2926,24 @@
             "header": [],
             "url": "{{baseUrl}}/api/v1/agents/{{agentId}}",
             "description": "Delete an agent by agentId."
+          }
+        },
+        {
+          "name": "Set Agent Subscription (super-admin)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"isSubscribe\": true\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/agents/{{agentId}}/subscription",
+            "description": "Super-admin toggles an agent's isSubscribe (subscribed agents can independently manage placeholder dealers' data)."
           }
         }
       ]
@@ -2405,6 +3130,125 @@
       ]
     },
     {
+      "name": "Agent-wise upload categories",
+      "auth": {
+        "type": "bearer",
+        "bearer": [
+          {
+            "key": "token",
+            "value": "{{token}}",
+            "type": "string"
+          }
+        ]
+      },
+      "item": [
+        {
+          "name": "Create agent upload category",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const d = pm.response.json().data || {};",
+                  "  if (d.awucId) pm.collectionVariables.set('awucId', d.awucId);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/agent-wise-upload-categories",
+            "description": "Agent-scoped. Link a global upload category to the calling agent (agentId from JWT).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"uploadCategoryId\": \"{{uploadCategoryId}}\",\n  \"processApi\": null,\n  \"isRequired\": true,\n  \"isProcess\": false,\n  \"isViewInStep\": true\n}"
+            }
+          }
+        },
+        {
+          "name": "List agent upload categories",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/agent-wise-upload-categories",
+            "description": "Full per-agent list."
+          }
+        },
+        {
+          "name": "List view-in-step",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/agent-wise-upload-categories/view-in-step",
+            "description": "Only isViewInStep=true (wizard checklist, includes bothSide)."
+          }
+        },
+        {
+          "name": "Update order ranks",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/agent-wise-upload-categories/order",
+            "description": "Reorder the agent's links.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    {\n      \"awucId\": \"{{awucId}}\",\n      \"orderRank\": 1\n    }\n  ]\n}"
+            }
+          }
+        },
+        {
+          "name": "Get by awucId",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/agent-wise-upload-categories/{{awucId}}",
+            "description": "Single link by awucId."
+          }
+        },
+        {
+          "name": "Update agent upload category",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/agent-wise-upload-categories/{{awucId}}",
+            "description": "Full replace of the link's flags.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"uploadCategoryId\": \"{{uploadCategoryId}}\",\n  \"processApi\": null,\n  \"isRequired\": false,\n  \"isProcess\": false,\n  \"isViewInStep\": false\n}"
+            }
+          }
+        },
+        {
+          "name": "Delete agent upload category",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/agent-wise-upload-categories/{{awucId}}",
+            "description": "Remove the link by awucId."
+          }
+        }
+      ]
+    },
+    {
       "name": "Dealer-Agent Grants",
       "auth": {
         "type": "bearer",
@@ -2468,6 +3312,150 @@
             "url": "{{baseUrl}}/api/v1/dealer-agents/{{dealerAgentId}}",
             "description": "Sets status REVOKED. Must belong to the calling dealer."
           }
+        },
+        {
+          "name": "Search Grantable Agents",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/dealer-agents/search?q=age",
+            "description": "Dealer-scoped. Partial match on email/mobile/whatsapp/name/firm/display, excluding already-active grants. Min 2 chars."
+          }
+        },
+        {
+          "name": "Switch Preview",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/dealer-agents/switch-preview?oldAgentId={{oldAgentId}}",
+            "description": "Dealer-scoped. Old agent's OPEN assignments + ledger balance, previewed before a switch."
+          }
+        },
+        {
+          "name": "Switch / Deactivate Agent",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/dealer-agents/switch",
+            "description": "Dealer-scoped. Atomic: settle-or-keep ledger, complete OPEN assignments, revoke old grant, optionally grant replacement (cap-checked post-revoke).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"oldAgentId\": \"{{oldAgentId}}\",\n  \"newAgentId\": \"{{newAgentId}}\",\n  \"settleDecision\": \"SETTLE\"\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Agent Invitations",
+      "auth": {
+        "type": "bearer",
+        "bearer": [
+          {
+            "key": "token",
+            "value": "{{token}}",
+            "type": "string"
+          }
+        ]
+      },
+      "item": [
+        {
+          "name": "Create Invitation",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const d = pm.response.json().data || {};",
+                  "  if (d.invitationId) pm.collectionVariables.set('invitationId', d.invitationId);",
+                  "  if (d.inviteLink) pm.collectionVariables.set('acceptToken', d.inviteLink.split('/').pop());",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/agent-invitations",
+            "description": "Dealer-scoped. Invite a brand-new agent by email; emails a single-use onboarding link. Cap-enforced (4231).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"agentName\": \"Ramesh Kumar\",\n  \"emailId\": \"ramesh@example.com\",\n  \"mobileNo\": \"9876500000\"\n}"
+            }
+          }
+        },
+        {
+          "name": "List Invitations",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/agent-invitations",
+            "description": "Dealer-scoped. List the dealer's PENDING invitations."
+          }
+        },
+        {
+          "name": "Resend Invitation",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/agent-invitations/{{invitationId}}/resend",
+            "description": "Dealer-scoped. Regenerate token + expiry and re-send the email."
+          }
+        },
+        {
+          "name": "Cancel Invitation",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/agent-invitations/{{invitationId}}",
+            "description": "Dealer-scoped. Cancel a PENDING invitation (retained as CANCELLED)."
+          }
+        },
+        {
+          "name": "Accept: Prefill (public)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/agent-invitations/accept/{{acceptToken}}",
+            "description": "PUBLIC. Validate token, return onboarding prefill."
+          },
+          "auth": {
+            "type": "noauth"
+          }
+        },
+        {
+          "name": "Accept: Onboard (public)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/agent-invitations/accept/{{acceptToken}}",
+            "description": "PUBLIC. Create the agent account + login (auto-grant if a slot is free) and return a login bundle.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"firmName\": \"Ramesh RTO\",\n  \"agentName\": \"Ramesh Kumar\",\n  \"displayName\": \"Ramesh RTO\",\n  \"mobileNo\": \"9876500000\",\n  \"password\": \"Agent@1234\",\n  \"city\": \"Pune\",\n  \"state\": \"MH\"\n}"
+            }
+          },
+          "auth": {
+            "type": "noauth"
+          }
         }
       ]
     },
@@ -2512,7 +3500,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"processId\": \"{{processId}}\",\n  \"agentId\": \"{{agentId}}\",\n  \"serviceId\": \"{{serviceId}}\",\n  \"note\": \"Please complete name transfer.\"\n}"
+              "raw": "{\n  \"processId\": \"{{processId}}\",\n  \"agentId\": \"{{agentId}}\",\n  \"serviceIds\": [\"{{serviceId}}\"],\n  \"note\": \"Please complete name transfer.\",\n  \"cost\": 5000,\n  \"costDate\": \"2026-07-10T00:00:00.000Z\",\n  \"costNote\": \"Name-transfer fee\"\n}"
             },
             "url": "{{baseUrl}}/api/v1/process-assignments",
             "description": "Dealer-scoped. Process must be owned by the dealer; the dealer must hold a live grant for the agent (else 4228)."
@@ -2542,7 +3530,7 @@
             "method": "GET",
             "header": [],
             "url": "{{baseUrl}}/api/v1/process-assignments/agent",
-            "description": "Agent-scoped. Caller agent's non-cancelled assignments (newest first). Optional ?dealerId= to filter by source dealer."
+            "description": "Agent-scoped. Caller agent's non-cancelled assignments (newest first). Each item's process carries tags ([{ tagId, tagName, colour }]). Optional ?dealerId= to filter by source dealer."
           }
         },
         {
@@ -2570,6 +3558,24 @@
             },
             "url": "{{baseUrl}}/api/v1/process-assignments/{{assignmentId}}/agent-status",
             "description": "Agent-scoped. Moves the assignment into one of the agent's own statuses (status must belong to the agent, else 4229)."
+          }
+        },
+        {
+          "name": "Update Assignment Cost",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cost\": 4000,\n  \"costDate\": \"2026-07-10T00:00:00.000Z\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/process-assignments/{{assignmentId}}/cost",
+            "description": "Dealer-scoped. Set (positive) / remove (cost:null) / keep (omit cost) the agent cost in the ledger. Amount change => reversal + new entry; date/note-only => in-place."
           }
         }
       ]
@@ -2682,6 +3688,24 @@
             "header": [],
             "url": "{{baseUrl}}/api/v1/placeholder-dealers/{{placeholderDealerId}}/disconnect",
             "description": "Clears connectedDealerId and revokes the CONNECT grant when present."
+          }
+        },
+        {
+          "name": "Connect Placeholder (super-admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"realDealerId\": \"{{dealerId}}\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/placeholder-dealers/{{placeholderDealerId}}/connect-admin",
+            "description": "Super-admin connects any agent's placeholder to a real subscribed dealer; migrates data + merges ledger."
           }
         }
       ]
@@ -2863,6 +3887,133 @@
             },
             "url": "{{baseUrl}}/api/v1/ai/analyze-id-proof",
             "description": "Upload a single ID proof image (Aadhaar, PAN, DL, etc.). Returns fullName, address, city, state, pincode."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Registrations",
+      "description": "Public self-registration (dealer/agent) -> super-admin approval. Public: register + verify OTP + /auth/me. Super-admin: list/approve/reject.",
+      "auth": {
+        "type": "bearer",
+        "bearer": [
+          {
+            "key": "token",
+            "value": "{{token}}",
+            "type": "string"
+          }
+        ]
+      },
+      "item": [
+        {
+          "name": "Self-register (public)",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"registerAs\": \"DEALER\",\n  \"applicantName\": \"Asha Patel\",\n  \"firmName\": \"Patel Motors\",\n  \"emailId\": \"asha.patel@example.com\",\n  \"mobileNo\": \"+919812345678\",\n  \"password\": \"NewPass@123\",\n  \"whatsappNo\": \"+919812345678\",\n  \"state\": \"Gujarat\",\n  \"city\": \"Surat\",\n  \"address\": \"12 Ring Road\",\n  \"pincode\": \"395002\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/registrations",
+            "description": "PUBLIC. Create a PENDING dealer/agent account (email unverified) and email a signup OTP. Then verify via /auth/verify-otp."
+          }
+        },
+        {
+          "name": "Verify signup OTP (public)",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"asha.patel@example.com\",\n  \"otp\": \"123456\",\n  \"purpose\": \"SIGNUP_EMAIL_VERIFICATION\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/auth/verify-otp",
+            "description": "PUBLIC. Verify the emailed OTP -> marks email verified and returns a session (still PENDING approval)."
+          }
+        },
+        {
+          "name": "Current user (/auth/me)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/auth/me",
+            "description": "AUTH. Fresh user + approvalStatus/approvalReason. Allowed even while pending; the pending screen polls this."
+          }
+        },
+        {
+          "name": "List registrations (admin)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/registrations?status=PENDING&page=1&limit=10",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "registrations"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "PENDING"
+                },
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "10"
+                }
+              ]
+            },
+            "description": "SUPER-ADMIN. Merged dealer+agent requests; default PENDING+REJECTED. Each item has kind (dealer|agent) + id."
+          }
+        },
+        {
+          "name": "Approve registration (admin)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/registrations/{{regKind}}/{{regId}}/approve",
+            "description": "SUPER-ADMIN. Approve ({{regKind}}=dealer|agent, {{regId}}=firm id) -> unlocks access; a dealer is also subscribed."
+          }
+        },
+        {
+          "name": "Reject registration (admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Incomplete documents\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/registrations/{{regKind}}/{{regId}}/reject",
+            "description": "SUPER-ADMIN. Reject with an optional reason (emailed). Blocks access."
           }
         }
       ]

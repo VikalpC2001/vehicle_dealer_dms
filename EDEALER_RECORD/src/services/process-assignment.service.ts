@@ -1,6 +1,7 @@
 import { StatusCodes } from 'http-status-codes';
-import type { ProcessAssignment } from '@prisma/client';
+import type { LedgerEntry, ProcessAssignment } from '@prisma/client';
 import * as processAssignmentRepository from '../repositories/process-assignment.repository';
+import * as khataRepository from '../repositories/khata.repository';
 import * as vehicleProcessRepository from '../repositories/vehicle-process.repository';
 import * as rtoServiceRepository from '../repositories/rto-service.repository';
 import type {
@@ -10,20 +11,48 @@ import type {
   ProcessAssignmentWithRelations,
   ProcessAssignmentWithServiceStatus,
 } from '../repositories/process-assignment.repository';
+import type { ProcessTagDto } from '../repositories/process-tag.repository';
 import { getVehicleProcessDetails } from './vehicle-process.service';
 import type { VehicleProcessDetailsDto } from './vehicle-process.service';
 import { AppError } from '../utils/app-error';
 
 /**
- * Fields a dealer supplies when assigning a vehicle process + RTO service to an agent.
- * `assignedByUserId` is resolved by the controller from the authenticated user.
+ * Fields a dealer supplies when assigning a vehicle process + one or more RTO services to an agent.
+ * One assignment is created per service. `assignedByUserId` is resolved by the controller from the
+ * authenticated user. The optional `cost`/`costDate`/`costNote` record money the dealer owes the
+ * agent, applied per service, in the ledger.
  */
-export interface CreateAssignmentInput {
+export interface CreateAssignmentsInput {
   processId: string;
   agentId: string;
-  serviceId: string;
+  serviceIds: string[];
   note?: string | null;
   assignedByUserId?: string | null;
+  cost?: number | null;
+  costDate?: Date | null;
+  costNote?: string | null;
+}
+
+/** Serializable summary of an assignment's live ledger cost (Decimal → number). */
+export interface AssignmentCostDto {
+  ledgerEntryId: string;
+  amount: number;
+  entryDate: Date;
+  description: string | null;
+}
+
+/** An assignment with its live agent cost attached (`null` when no cost is recorded). */
+export type AssignmentWithCost = ProcessAssignmentWithRelations & { cost: AssignmentCostDto | null };
+
+/** Maps a ledger entry to the compact cost DTO (or `null`). */
+function toCostDto(entry: LedgerEntry | null): AssignmentCostDto | null {
+  if (!entry) return null;
+  return {
+    ledgerEntryId: entry.ledgerEntryId,
+    amount: entry.amount.toNumber(),
+    entryDate: entry.entryDate,
+    description: entry.description,
+  };
 }
 
 /**
@@ -49,24 +78,38 @@ const assertProcessOwnedByDealer = async (
   }
 };
 
+/** The clear, actionable conflict when the (process, agent, service) triple is already live (4230). */
+const alreadyAssignedError = (): AppError =>
+  new AppError(
+    'This process is already assigned to this agent for that service. Open that assignment to add or change its cost.',
+    StatusCodes.UNPROCESSABLE_ENTITY,
+    4230,
+  );
+
+/** The created assignment rows plus the services skipped because they were already actively assigned. */
+export interface CreateAssignmentsResult {
+  created: ProcessAssignmentWithRelations[];
+  skippedServiceIds: string[];
+}
+
 /**
- * Assigns a vehicle process + chosen RTO service to an agent for the given dealer.
- *
- * Validates that the process belongs to the dealer, that the dealer holds a live grant for the
- * agent, and that the RTO service exists. The default kanban column is the agent's
- * lowest-ranked status (or null). A duplicate assignment (same process + agent + service)
- * surfaces as Prisma `P2002`, mapped to 409/4090 by the global handler.
+ * Assigns a vehicle process + one or more RTO services to an agent for the given dealer, creating
+ * ONE assignment per service atomically. Validates the process belongs to the dealer, the dealer
+ * holds a live grant, and every requested service exists. Services already actively assigned to that
+ * agent for the process are skipped (a CANCELLED one is reactivated). The default kanban column is
+ * the agent's lowest-ranked status. An optional `cost` is posted per created service.
  *
  * @param dealerId - Resolved dealer scope.
- * @param input - Assignment fields (`assignedByUserId` resolved by the controller).
- * @throws AppError 404/4040 when the process or service is missing.
+ * @param input - Assignment fields incl. `serviceIds[]` (`assignedByUserId` resolved by the controller).
+ * @throws AppError 404/4040 when the process or any service is missing.
  * @throws AppError 403/4034 when the process belongs to another dealer.
  * @throws AppError 422/4228 when the dealer has not granted the agent access.
+ * @throws AppError 422/4230 when EVERY requested service is already assigned.
  */
-export async function createAssignment(
+export async function createAssignments(
   dealerId: string,
-  input: CreateAssignmentInput,
-): Promise<ProcessAssignmentWithRelations> {
+  input: CreateAssignmentsInput,
+): Promise<CreateAssignmentsResult> {
   await assertProcessOwnedByDealer(input.processId, dealerId);
 
   const grant = await processAssignmentRepository.findActiveGrant(dealerId, input.agentId);
@@ -78,22 +121,109 @@ export async function createAssignment(
     );
   }
 
-  const service = await rtoServiceRepository.findRtoServiceById(input.serviceId);
-  if (!service) {
-    throw new AppError('RTO service not found', StatusCodes.NOT_FOUND, 4040);
+  const serviceIds = [...new Set(input.serviceIds)];
+
+  // Every requested service must exist.
+  for (const serviceId of serviceIds) {
+    const service = await rtoServiceRepository.findRtoServiceById(serviceId);
+    if (!service) {
+      throw new AppError('RTO service not found', StatusCodes.NOT_FOUND, 4040);
+    }
+  }
+
+  // Split into services to create vs. already-active ones to skip. A CANCELLED triple is NOT skipped
+  // (the upsert reactivates it); a still-live one is skipped so the batch never trips 4230/P2002.
+  const toCreate: string[] = [];
+  const skippedServiceIds: string[] = [];
+  for (const serviceId of serviceIds) {
+    const existing = await processAssignmentRepository.findAssignmentByTriple(
+      input.processId,
+      input.agentId,
+      serviceId,
+    );
+    if (existing && existing.status !== 'CANCELLED') {
+      skippedServiceIds.push(serviceId);
+    } else {
+      toCreate.push(serviceId);
+    }
+  }
+
+  // Nothing new to assign — every requested service is already live. Surface the clear conflict.
+  if (toCreate.length === 0) {
+    throw alreadyAssignedError();
   }
 
   const firstStatus = await processAssignmentRepository.findFirstAgentStatus(input.agentId);
 
-  return processAssignmentRepository.createAssignment({
-    processId: input.processId,
+  // The assignments + (optional per-service) cost CREDITs post atomically in one transaction. The
+  // 4228 grant check above is the same guard the ledger requires, so cost posts are not re-guarded.
+  try {
+    const created = await processAssignmentRepository.createManyAssignmentsWithCost({
+      assignments: toCreate.map((serviceId) => ({
+        processId: input.processId,
+        dealerId,
+        agentId: input.agentId,
+        serviceId,
+        agentStatusId: firstStatus?.statusId ?? null,
+        note: input.note ?? null,
+        assignedByUserId: input.assignedByUserId ?? null,
+      })),
+      cost:
+        input.cost && input.cost > 0
+          ? {
+              amount: input.cost,
+              entryDate: input.costDate ?? null,
+              description: input.costNote ?? 'Agent cost',
+            }
+          : null,
+      postedByUserId: input.assignedByUserId ?? null,
+    });
+    return { created, skippedServiceIds };
+  } catch (err) {
+    // The pre-check and the upsert are not atomic; a concurrent identical create can still trip the
+    // unique constraint (P2002). Re-map it to the same clear 4230 rather than the generic 4090.
+    if (err && typeof err === 'object' && (err as { code?: string }).code === 'P2002') {
+      throw alreadyAssignedError();
+    }
+    throw err;
+  }
+}
+
+/**
+ * Sets/changes/removes the agent cost recorded in the ledger for an assignment the dealer owns.
+ * Editing the amount posts a ledger reversal + new entry (append-only, preserving history); editing
+ * only the date/note updates the entry in place. See
+ * {@link processAssignmentRepository.updateAssignmentCost} for the exact branching.
+ *
+ * @param dealerId - Resolved dealer scope.
+ * @param assignmentId - Assignment UUID.
+ * @param input - `cost` (positive to set, `null` to remove, omitted to keep) + optional date/note.
+ * @throws AppError 404/4040 when the assignment is missing.
+ * @throws AppError 403/4034 when the assignment belongs to another dealer.
+ */
+export async function updateAssignmentCost(
+  dealerId: string,
+  assignmentId: string,
+  input: { cost?: number | null; costDate?: Date | null; costNote?: string | null; userId?: string | null },
+): Promise<AssignmentCostDto | null> {
+  const assignment = await processAssignmentRepository.findAssignmentById(assignmentId);
+  if (!assignment) {
+    throw new AppError('Assignment not found', StatusCodes.NOT_FOUND, 4040);
+  }
+  if (assignment.dealerId !== dealerId) {
+    throw new AppError('You do not have access to this assignment', StatusCodes.FORBIDDEN, 4034);
+  }
+
+  const { costEntry } = await processAssignmentRepository.updateAssignmentCost({
     dealerId,
-    agentId: input.agentId,
-    serviceId: input.serviceId,
-    agentStatusId: firstStatus?.statusId ?? null,
-    note: input.note ?? null,
-    assignedByUserId: input.assignedByUserId ?? null,
+    agentId: assignment.agentId,
+    assignmentId,
+    amount: input.cost,
+    entryDate: input.costDate,
+    description: input.costNote,
+    postedByUserId: input.userId ?? null,
   });
+  return toCostDto(costEntry);
 }
 
 /**
@@ -107,9 +237,16 @@ export async function createAssignment(
 export async function listAssignmentsForProcess(
   dealerId: string,
   processId: string,
-): Promise<ProcessAssignmentWithRelations[]> {
+): Promise<AssignmentWithCost[]> {
   await assertProcessOwnedByDealer(processId, dealerId);
-  return processAssignmentRepository.listAssignmentsByProcess(processId);
+  const assignments = await processAssignmentRepository.listAssignmentsByProcess(processId);
+  const costByAssignment = await khataRepository.listActiveCostEntriesForAssignments(
+    assignments.map((a) => a.assignmentId),
+  );
+  return assignments.map((a) => ({
+    ...a,
+    cost: toCostDto(costByAssignment.get(a.assignmentId) ?? null),
+  }));
 }
 
 /**
@@ -149,9 +286,25 @@ export interface AssignmentDetailResult {
 }
 
 /**
+ * Agent-list assignment row with the source process's tags flattened to the shared
+ * `{ tagId, tagName, colour }` shape under `process.tags` (all existing fields kept).
+ */
+export type ProcessAssignmentForAgentDto = Omit<ProcessAssignmentForAgent, 'process'> & {
+  process: Omit<ProcessAssignmentForAgent['process'], 'processTags'> & {
+    tags: ProcessTagDto[];
+  };
+};
+
+/** Flattens an agent-list row's nested ProcessTag join rows into `process.tags` (existing fields kept). */
+const toAgentAssignmentDto = (row: ProcessAssignmentForAgent): ProcessAssignmentForAgentDto => {
+  const { processTags, ...restProcess } = row.process;
+  return { ...row, process: { ...restProcess, tags: processTags.map((pt) => pt.tag) } };
+};
+
+/**
  * Lists the agent's non-cancelled assignments (newest first), optionally filtered to one source
  * dealer. Each row carries its RTO service, agent kanban status, and the source process with its
- * vehicle registration number and source dealer summary.
+ * vehicle registration number, source dealer summary, and tags (flat `{ tagId, tagName, colour }`).
  *
  * @param agentId - Resolved agent scope.
  * @param dealerId - Optional source-dealer UUID to filter by.
@@ -159,8 +312,9 @@ export interface AssignmentDetailResult {
 export async function listAssignmentsForAgent(
   agentId: string,
   dealerId?: string,
-): Promise<ProcessAssignmentForAgent[]> {
-  return processAssignmentRepository.listAssignmentsForAgent(agentId, dealerId);
+): Promise<ProcessAssignmentForAgentDto[]> {
+  const rows = await processAssignmentRepository.listAssignmentsForAgent(agentId, dealerId);
+  return rows.map(toAgentAssignmentDto);
 }
 
 /**

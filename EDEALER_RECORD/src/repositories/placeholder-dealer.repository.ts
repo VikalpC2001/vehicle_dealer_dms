@@ -222,3 +222,126 @@ export async function revokeConnectGrant(
     data: { status: DealerAgentStatus.REVOKED },
   });
 }
+
+/** Summary of what a connect migration moved from the placeholder onto the real dealer. */
+export interface ConnectMigrationResult {
+  placeholder: PlaceholderDealerWithConnection;
+  migratedProcesses: number;
+  migratedAssignments: number;
+  ledgerEntriesMerged: number;
+}
+
+/**
+ * Atomically connects a placeholder to a real dealer AND migrates everything the agent managed
+ * under the placeholder onto that real dealer (so the data lives "on the dealer's name"):
+ *  1. re-point the placeholder's `VehicleProcess`, `ProcessAssignment`, `ProcessReference`, and
+ *     `DealerReference` rows to the real dealer (process children ride along via `processId`);
+ *  2. merge the placeholder's khata into the real dealer's account — move its `LedgerEntry` rows
+ *     (tagging `sourceDealerId = placeholderId` for provenance), recompute the real account's
+ *     running `balanceAfter`/balance/totals over all entries in `seq` order, and drop the emptied
+ *     placeholder account;
+ *  3. create/reactivate the CONNECT grant and set `connectedDealerId`.
+ *
+ * Runs in ONE transaction. Callers enforce the guards (owned placeholder, real subscribed dealer)
+ * first. Balances are summed in integer paise to avoid float drift.
+ */
+export async function connectPlaceholderTx(
+  placeholderId: string,
+  realDealerId: string,
+  agentId: string,
+): Promise<ConnectMigrationResult> {
+  return prisma.$transaction(async (tx) => {
+    // 1. Migrate the dealer-scoped vehicle data.
+    const vp = await tx.vehicleProcess.updateMany({
+      where: { dealerId: placeholderId },
+      data: { dealerId: realDealerId },
+    });
+    const pa = await tx.processAssignment.updateMany({
+      where: { dealerId: placeholderId },
+      data: { dealerId: realDealerId },
+    });
+    await tx.processReference.updateMany({
+      where: { dealerId: placeholderId },
+      data: { dealerId: realDealerId },
+    });
+    await tx.dealerReference.updateMany({
+      where: { dealerId: placeholderId },
+      data: { dealerId: realDealerId },
+    });
+
+    // 2. Merge the placeholder's khata (if any) into the real dealer's account.
+    let ledgerEntriesMerged = 0;
+    const placeholderAccount = await tx.khataAccount.findUnique({
+      where: { dealerId_agentId: { dealerId: placeholderId, agentId } },
+    });
+    if (placeholderAccount) {
+      const realAccount = await tx.khataAccount.upsert({
+        where: { dealerId_agentId: { dealerId: realDealerId, agentId } },
+        create: { dealerId: realDealerId, agentId },
+        update: {},
+      });
+      const moved = await tx.ledgerEntry.updateMany({
+        where: { khataAccountId: placeholderAccount.khataAccountId },
+        data: {
+          dealerId: realDealerId,
+          khataAccountId: realAccount.khataAccountId,
+          sourceDealerId: placeholderId,
+        },
+      });
+      ledgerEntriesMerged = moved.count;
+
+      // Recompute the merged account's running balances over ALL its entries (chronological seq).
+      const all = await tx.ledgerEntry.findMany({
+        where: { khataAccountId: realAccount.khataAccountId },
+        orderBy: { seq: 'asc' },
+      });
+      let balanceP = 0;
+      let creditP = 0;
+      let debitP = 0;
+      for (const e of all) {
+        const paise = Math.round(e.amount.toNumber() * 100);
+        if (e.direction === 'CREDIT') {
+          balanceP += paise;
+          creditP += paise;
+        } else {
+          balanceP -= paise;
+          debitP += paise;
+        }
+        await tx.ledgerEntry.update({
+          where: { ledgerEntryId: e.ledgerEntryId },
+          data: { balanceAfter: balanceP / 100 },
+        });
+      }
+      await tx.khataAccount.update({
+        where: { khataAccountId: realAccount.khataAccountId },
+        data: { balance: balanceP / 100, totalCredit: creditP / 100, totalDebit: debitP / 100 },
+      });
+      // The placeholder account now has no entries — remove it.
+      await tx.khataAccount.delete({ where: { khataAccountId: placeholderAccount.khataAccountId } });
+    }
+
+    // 3. Authorization + connection pointer.
+    await tx.dealerAgent.upsert({
+      where: { dealerId_agentId: { dealerId: realDealerId, agentId } },
+      create: {
+        dealerId: realDealerId,
+        agentId,
+        status: DealerAgentStatus.ACTIVE,
+        source: DealerAgentSource.CONNECT,
+      },
+      update: { status: DealerAgentStatus.ACTIVE, source: DealerAgentSource.CONNECT },
+    });
+    const placeholder = await tx.dealer.update({
+      where: { dealerId: placeholderId },
+      data: { connectedDealerId: realDealerId },
+      include: { connectedDealer: connectedDealerSelect },
+    });
+
+    return {
+      placeholder,
+      migratedProcesses: vp.count,
+      migratedAssignments: pa.count,
+      ledgerEntriesMerged,
+    };
+  });
+}

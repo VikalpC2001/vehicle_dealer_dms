@@ -22,7 +22,7 @@ import {
   getAuthenticationOptions,
   verifyAuthentication,
 } from '../services/passkey.service';
-import { issueUserAccessToken } from '../services/access-token.service';
+import { issueUserAccessToken, resolveFirmApproval } from '../services/access-token.service';
 import { signRefreshToken, verifyToken } from '../utils/jwt';
 import { sendSuccess } from '../utils/api-response';
 import { AppError } from '../utils/app-error';
@@ -58,11 +58,14 @@ const buildLoginUserPayload = async (
   dealerId: string | null;
   agentId: string | null;
   isSuperAdmin: boolean;
+  approvalStatus: string;
+  approvalReason: string | null;
 }> => {
   const [dealerId, agentId] = await Promise.all([
     getPrimaryDealerIdForUser(user.userId),
     getPrimaryAgentIdForUser(user.userId),
   ]);
+  const { approvalStatus, approvalReason } = await resolveFirmApproval(dealerId, agentId);
   return {
     userId: user.userId,
     emailId: user.emailId,
@@ -71,8 +74,24 @@ const buildLoginUserPayload = async (
     dealerId,
     agentId,
     isSuperAdmin: user.isSuperAdmin,
+    approvalStatus,
+    approvalReason,
   };
 };
+
+/**
+ * GET /auth/me
+ * Returns the current user with a fresh (DB-read) approval state — used by the pending screen to
+ * detect approval without re-login.
+ */
+export async function me(req: Request, res: Response): Promise<void> {
+  const user = await findUserById(req.user.sub);
+  if (!user) {
+    throw new AppError('User not found', StatusCodes.NOT_FOUND, 4040);
+  }
+  const userPayload = await buildLoginUserPayload(user);
+  sendSuccess(res, 'Current user', { user: userPayload });
+}
 
 /**
  * POST /auth/register

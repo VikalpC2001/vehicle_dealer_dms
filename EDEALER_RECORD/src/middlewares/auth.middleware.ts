@@ -31,6 +31,26 @@ export const authenticate: RequestHandler = (
         new AppError('Invalid token for this resource', StatusCodes.UNAUTHORIZED, 4015),
       );
     }
+    // Gate self-registered dealers/agents whose firm isn't APPROVED: they may sign in and use the
+    // `/auth` routes (e.g. `/auth/me` to poll status, logout) but nothing else until approved.
+    // `req.baseUrl` is the router mount (e.g. `/api/v1/vehicle-processes`, `/api/v1/auth`).
+    const linkedFirm = payload.dealerId || payload.agentId;
+    if (
+      linkedFirm &&
+      payload.approvalStatus &&
+      payload.approvalStatus !== 'APPROVED' &&
+      !req.baseUrl.endsWith('/auth')
+    ) {
+      return next(
+        new AppError(
+          payload.approvalStatus === 'REJECTED'
+            ? 'Your registration was declined'
+            : 'Your account is pending approval',
+          StatusCodes.FORBIDDEN,
+          4021,
+        ),
+      );
+    }
     req.user = payload;
     next();
   } catch {

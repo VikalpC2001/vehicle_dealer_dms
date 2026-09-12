@@ -22,5 +22,17 @@ export function ProtectedRoute({ children, allowedRoles }) {
     return <Navigate to={homeForRole(user?.role)} replace />
   }
 
+  // A self-registered dealer/agent whose firm isn't APPROVED can't enter any role-gated area — they
+  // see the pending/rejected screen instead. (The pending screen itself has no `allowedRoles`, so
+  // it's exempt from this check and there is no redirect loop.)
+  if (
+    allowedRoles &&
+    (user?.role === 'dealer' || user?.role === 'agent') &&
+    user?.approvalStatus &&
+    user.approvalStatus !== 'APPROVED'
+  ) {
+    return <Navigate to="/pending-approval" replace />
+  }
+
   return children
 }

@@ -21,7 +21,17 @@ export class GcsStorageProvider implements StorageProvider {
   }
 
   /** @inheritdoc */
+  moveFile(_sourceKey: string, _destKey: string): Promise<void> {
+    return Promise.reject(new Error('GcsStorageProvider is not implemented'));
+  }
+
+  /** @inheritdoc */
   getPublicUrl(_fileKey: string, _publicOrigin?: string): string {
     throw new Error('GcsStorageProvider is not implemented');
+  }
+
+  /** @inheritdoc */
+  fileExists(_fileKey: string): Promise<boolean> {
+    return Promise.reject(new Error('GcsStorageProvider is not implemented'));
   }
 }

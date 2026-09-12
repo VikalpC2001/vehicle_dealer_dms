@@ -1,10 +1,9 @@
 import { useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Trash2, ArrowUp, ArrowDown, Loader2, Settings2 } from 'lucide-react'
+import { Plus, Trash2, ArrowUp, ArrowDown, Loader2 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
-import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import {
   Dialog,
@@ -33,14 +32,14 @@ function linkBody(item, overrides = {}) {
     isRequired: item.isRequired ?? false,
     isProcess: item.isProcess ?? false,
     isViewInStep: item.isViewInStep ?? false,
-    processApi: item.processApi ?? null,
     ...overrides,
   }
 }
 
 /**
  * Configure which document categories appear in the create-process wizard, and their
- * required/visible flags and order. Dealers link existing GLOBAL categories.
+ * required/visible flags and order. Dealers link existing GLOBAL categories. The OCR extraction API
+ * is managed centrally by the super-admin (Document Categories) and inherited here.
  */
 export function UploadConfigPanel() {
   const queryClient = useQueryClient()
@@ -54,9 +53,8 @@ export function UploadConfigPanel() {
   })
 
   const [open, setOpen] = useState(false)
-  const [pick, setPick] = useState({ uploadCategoryId: '', isRequired: false, isViewInStep: true, processApi: '' })
+  const [pick, setPick] = useState({ uploadCategoryId: '', isRequired: false, isViewInStep: true })
   const [deleteTarget, setDeleteTarget] = useState(null)
-  const [apiEdit, setApiEdit] = useState(null) // { item, value }
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['dealer-wise-upload-categories'] })
 
@@ -70,7 +68,6 @@ export function UploadConfigPanel() {
         isRequired: pick.isRequired,
         isProcess: false,
         isViewInStep: pick.isViewInStep,
-        processApi: pick.processApi.trim() || null,
       }),
     onSuccess: () => {
       invalidate()
@@ -105,14 +102,6 @@ export function UploadConfigPanel() {
   const toggle = (item, field, value) =>
     updateMutation.mutate({ dwucId: item.dwucId, body: linkBody(item, { [field]: value }) })
 
-  // Saves ONLY the processApi for the edited row (all other flags preserved via linkBody).
-  const saveApi = () => {
-    if (!apiEdit) return
-    const next = (apiEdit.value || '').trim() || null
-    updateMutation.mutate({ dwucId: apiEdit.item.dwucId, body: linkBody(apiEdit.item, { processApi: next }) })
-    setApiEdit(null)
-  }
-
   const move = (index, dir) => {
     const j = index + dir
     if (j < 0 || j >= configured.length) return
@@ -130,7 +119,7 @@ export function UploadConfigPanel() {
             Which documents appear when creating a process, whether they&apos;re required, and their order.
           </p>
         </div>
-        <Button size="sm" onClick={() => { setPick({ uploadCategoryId: '', isRequired: false, isViewInStep: true, processApi: '' }); setOpen(true) }} disabled={available.length === 0}>
+        <Button size="sm" onClick={() => { setPick({ uploadCategoryId: '', isRequired: false, isViewInStep: true }); setOpen(true) }} disabled={available.length === 0}>
           <Plus className="mr-1.5 h-4 w-4" /> Add Document
         </Button>
       </CardHeader>
@@ -145,9 +134,6 @@ export function UploadConfigPanel() {
               <div key={item.dwucId} className="flex flex-wrap items-center justify-between gap-3 py-3">
                 <div className="min-w-0">
                   <p className="font-medium">{item.categoryName}</p>
-                  {item.processApi && (
-                    <p className="truncate text-xs text-muted-foreground">API: {item.processApi}</p>
-                  )}
                 </div>
                 <div className="flex flex-wrap items-center gap-4">
                   <label className="flex items-center gap-2 text-sm">
@@ -159,15 +145,6 @@ export function UploadConfigPanel() {
                     Show in wizard
                   </label>
                   <div className="flex items-center gap-1">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => setApiEdit({ item, value: item.processApi ?? '' })}
-                      aria-label="Edit extraction API"
-                      title="Edit extraction API"
-                    >
-                      <Settings2 className="h-4 w-4" />
-                    </Button>
                     <Button variant="ghost" size="icon" onClick={() => move(i, -1)} disabled={i === 0 || reorderMutation.isPending} aria-label="Move up">
                       <ArrowUp className="h-4 w-4" />
                     </Button>
@@ -219,55 +196,8 @@ export function UploadConfigPanel() {
               <span className="text-sm">Show in wizard</span>
               <Switch checked={pick.isViewInStep} onCheckedChange={(v) => setPick((p) => ({ ...p, isViewInStep: v }))} />
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="pickProcessApi">Extraction API (optional)</Label>
-              <Input
-                id="pickProcessApi"
-                value={pick.processApi}
-                onChange={(e) => setPick((p) => ({ ...p, processApi: e.target.value }))}
-                placeholder="e.g. ai/analyze-id-proof"
-              />
-              <p className="text-xs text-muted-foreground">
-                If set, the uploaded image is sent here to auto-fill details (e.g. a Buyer ID).
-              </p>
-            </div>
             <Button type="submit" className="w-full" disabled={!pick.uploadCategoryId || createMutation.isPending}>
               {createMutation.isPending ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Adding…</> : 'Add'}
-            </Button>
-          </form>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={Boolean(apiEdit)} onOpenChange={(o) => !o && setApiEdit(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Extraction API</DialogTitle>
-            <DialogDescription>
-              Endpoint used to auto-fill from &quot;{apiEdit?.item?.categoryName}&quot;. Leave empty to disable.
-            </DialogDescription>
-          </DialogHeader>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault()
-              saveApi()
-            }}
-            className="space-y-4"
-          >
-            <div className="space-y-2">
-              <Label htmlFor="apiEditInput">processApi</Label>
-              <Input
-                id="apiEditInput"
-                value={apiEdit?.value ?? ''}
-                onChange={(e) => setApiEdit((s) => ({ ...s, value: e.target.value }))}
-                placeholder="e.g. ai/analyze-id-proof"
-                autoFocus
-              />
-              <p className="text-xs text-muted-foreground">
-                Full URL or a path appended to the API base (e.g. <code>ai/analyze-id-proof</code>).
-              </p>
-            </div>
-            <Button type="submit" className="w-full" disabled={updateMutation.isPending}>
-              {updateMutation.isPending ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving…</> : 'Save'}
             </Button>
           </form>
         </DialogContent>

@@ -2,16 +2,22 @@ import { randomUUID } from 'node:crypto';
 import { StatusCodes } from 'http-status-codes';
 import { AppError } from './app-error';
 
-/** MIME types permitted for direct image uploads. */
-export const ALLOWED_IMAGE_MIME_TYPES = ['image/png', 'image/jpeg', 'image/webp'] as const;
+/** MIME types permitted for direct document uploads — photos plus PDF documents. */
+export const ALLOWED_IMAGE_MIME_TYPES = [
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+  'application/pdf',
+] as const;
 
-/** Union of allowed image MIME type literals. */
+/** Union of allowed upload MIME type literals. */
 export type AllowedImageMimeType = (typeof ALLOWED_IMAGE_MIME_TYPES)[number];
 
 const MIME_TO_CANONICAL_EXT: Record<AllowedImageMimeType, string> = {
   'image/png': 'png',
   'image/jpeg': 'jpg',
   'image/webp': 'webp',
+  'application/pdf': 'pdf',
 };
 
 const ALLOWED_MIME_SET = new Set<string>(ALLOWED_IMAGE_MIME_TYPES);
@@ -53,7 +59,7 @@ export const validateMimeType = (contentType: string | undefined): void => {
   const mime = normalizeContentType(contentType);
   if (!isAllowedImageMimeType(mime)) {
     throw new AppError(
-      'Unsupported or missing Content-Type; allowed: image/png, image/jpeg, image/webp',
+      'Unsupported or missing Content-Type; allowed: image/png, image/jpeg, image/webp, application/pdf',
       StatusCodes.UNSUPPORTED_MEDIA_TYPE,
       4150,
     );
@@ -108,7 +114,42 @@ export const generateFileName = (contentType: AllowedImageMimeType): string => {
 
 /** Matches UUID v4 keys produced by `crypto.randomUUID()` plus allowed extensions. */
 const FILE_KEY_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.(png|jpg|webp)$/i;
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.(png|jpg|webp|pdf)$/i;
+
+/**
+ * Sanitizes a vehicle registration number into a filesystem-safe folder segment (uppercased,
+ * alphanumeric only). Falls back to `VEHICLE` when nothing usable remains.
+ *
+ * @param registrationNumber - Raw registration number (may contain spaces/punctuation).
+ */
+export const sanitizeRegistrationForPath = (registrationNumber: string | null | undefined): string => {
+  const cleaned = (registrationNumber ?? '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+  return cleaned.length > 0 ? cleaned : 'VEHICLE';
+};
+
+/**
+ * Builds a per-process storage key `"{registration}_{processId}/{basename}"` from a flat upload key.
+ * Both folder components are server-controlled (sanitized registration + UUID processId), and only
+ * the trailing basename of `fileKey` is kept — so the result is always a single safe subfolder with
+ * no traversal. If `fileKey` already contains a folder, it is treated as already-scoped and returned
+ * unchanged (idempotent).
+ *
+ * @param registrationNumber - The process's vehicle registration number.
+ * @param processId - The vehicle process UUID.
+ * @param fileKey - The flat upload key (e.g. `"<uuid>.jpg"`).
+ */
+export const buildProcessScopedKey = (
+  registrationNumber: string | null | undefined,
+  processId: string,
+  fileKey: string,
+): string => {
+  if (fileKey.includes('/')) {
+    return fileKey;
+  }
+  const folder = `${sanitizeRegistrationForPath(registrationNumber)}_${processId}`;
+  const base = fileKey.split('/').pop() ?? fileKey;
+  return `${folder}/${base}`;
+};
 
 /**
  * Validates `fileKey` path safety and format (UUID + allowed extension). Rejects
@@ -169,6 +210,14 @@ export const assertBufferMatchesDeclaredMime = (buffer: Buffer, mime: AllowedIma
   if (mime === 'image/jpeg') {
     if (buffer.length < 3 || buffer[0] !== 0xff || buffer[1] !== 0xd8 || buffer[2] !== 0xff) {
       throw new AppError('Body is not a valid JPEG file', StatusCodes.BAD_REQUEST, 4010);
+    }
+    return;
+  }
+  if (mime === 'application/pdf') {
+    // "%PDF-" magic bytes (25 50 44 46 2D).
+    const sig = Buffer.from('%PDF-', 'ascii');
+    if (buffer.length < sig.length || !buffer.subarray(0, sig.length).equals(sig)) {
+      throw new AppError('Body is not a valid PDF file', StatusCodes.BAD_REQUEST, 4010);
     }
     return;
   }

@@ -24,9 +24,27 @@ export interface StorageProvider {
   saveFile(buffer: Buffer, fileKey: string): Promise<void>;
 
   /**
+   * Relocates an existing object from `sourceKey` to `destKey` (used to move a flat-uploaded file
+   * into its per-process folder once the process id is known). Destination directories are created
+   * as needed. Both keys are server-computed; implementations must still guard against path escape.
+   *
+   * @param sourceKey - Existing object key (the flat upload key).
+   * @param destKey - New object key (may include a folder segment).
+   */
+  moveFile(sourceKey: string, destKey: string): Promise<void>;
+
+  /**
    * Returns the canonical public URL for reading the object after upload.
    *
    * @param publicOrigin - Optional origin; when omitted, use config `BASE_URL`.
    */
   getPublicUrl(fileKey: string, publicOrigin?: string): string;
+
+  /**
+   * Reports whether an object exists at the given key. Used to resolve a relocation when the source
+   * has already been moved by a sibling reference sharing the same upload.
+   *
+   * @param fileKey - Object key to probe.
+   */
+  fileExists(fileKey: string): Promise<boolean>;
 }

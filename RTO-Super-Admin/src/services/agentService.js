@@ -51,6 +51,18 @@ export const agentService = {
     return unwrap(data)
   },
 
+  /** GET /agents/me — the caller agent's own profile. */
+  async getMe() {
+    const { data } = await api.get('/agents/me')
+    return unwrap(data)
+  },
+
+  /** PATCH /agents/me — the agent edits their own profile (isSubscribe is preserved server-side). */
+  async updateMe(payload) {
+    const { data } = await api.patch('/agents/me', payload)
+    return unwrap(data)
+  },
+
   /** POST /agents — create an agent. */
   async create(payload) {
     const { data } = await api.post('/agents', payload)
@@ -60,6 +72,12 @@ export const agentService = {
   /** PATCH /agents/:id — update an agent. */
   async update(id, payload) {
     const { data } = await api.patch(`/agents/${id}`, payload)
+    return unwrap(data)
+  },
+
+  /** PATCH /agents/:id/subscription — super-admin toggles the agent's subscription. */
+  async setSubscription(id, isSubscribe) {
+    const { data } = await api.patch(`/agents/${id}/subscription`, { isSubscribe })
     return unwrap(data)
   },
 

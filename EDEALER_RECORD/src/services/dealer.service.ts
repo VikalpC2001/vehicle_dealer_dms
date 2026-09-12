@@ -1,5 +1,5 @@
 import { StatusCodes } from 'http-status-codes';
-import type { Dealer } from '@prisma/client';
+import type { ApprovalStatus, Dealer } from '@prisma/client';
 import * as dealerRepository from '../repositories/dealer.repository';
 import { AppError } from '../utils/app-error';
 import { parsePagination, buildPaginationMeta } from '../utils/pagination';
@@ -20,6 +20,7 @@ export interface CreateDealerInput {
   displayName: string;
   whatsappNo: string;
   isSubscribe?: boolean;
+  approvalStatus?: ApprovalStatus;
 }
 
 /**

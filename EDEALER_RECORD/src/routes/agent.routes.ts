@@ -6,6 +6,8 @@ import {
   createAgentHandler,
   createAgentWithUserHandler,
   listAgentsHandler,
+  getMyAgentHandler,
+  updateMyAgentHandler,
   getAgentByIdHandler,
   updateAgentHandler,
   deleteAgentHandler,
@@ -16,7 +18,10 @@ import {
   listAgentsSchema,
   getAgentByIdSchema,
   updateAgentSchema,
+  updateMyAgentSchema,
 } from '../validations/agent.validation';
+import { setAgentSubscriptionHandler } from '../controllers/subscription.controller';
+import { setSubscriptionSchema } from '../validations/subscription.validation';
 
 const router = Router();
 
@@ -41,6 +46,13 @@ router.get(
   asyncHandler(listAgentsHandler),
 );
 
+/**
+ * Agent self-profile — resolved from the token, not a path id. Registered BEFORE `/:id` so `me`
+ * is not captured as an agent id. `isSubscribe` is never editable here (super-admin's).
+ */
+router.get('/me', asyncHandler(getMyAgentHandler));
+router.patch('/me', validate(updateMyAgentSchema), asyncHandler(updateMyAgentHandler));
+
 router.get(
   '/:id',
   validate(getAgentByIdSchema),
@@ -51,6 +63,13 @@ router.patch(
   '/:id',
   validate(updateAgentSchema),
   asyncHandler(updateAgentHandler),
+);
+
+/** Super-admin: toggle an agent's subscription. */
+router.patch(
+  '/:id/subscription',
+  validate(setSubscriptionSchema),
+  asyncHandler(setAgentSubscriptionHandler),
 );
 
 router.delete(

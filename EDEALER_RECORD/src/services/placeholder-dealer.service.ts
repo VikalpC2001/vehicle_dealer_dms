@@ -105,25 +105,8 @@ export async function deletePlaceholder(agentId: string, id: string): Promise<De
   return placeholderDealerRepository.deletePlaceholderDealer(id);
 }
 
-/**
- * Connects a placeholder dealer owned by the calling agent to a real subscribed dealer.
- * Sets `connectedDealerId` on the placeholder and creates/reactivates a CONNECT grant
- * so the agent gains access to the real dealer.
- *
- * @param agentId - The owning agent's id.
- * @param id - The placeholder dealer id.
- * @param realDealerId - The target real dealer id.
- * @returns The updated placeholder dealer (with connection).
- * @throws AppError 404 (4040) when placeholder or target is missing;
- *   409 (4098) when the target is not a subscribed real dealer.
- */
-export async function connectPlaceholder(
-  agentId: string,
-  id: string,
-  realDealerId: string,
-): Promise<PlaceholderDealerWithConnection> {
-  await loadOwnedPlaceholder(agentId, id);
-
+/** Validates that `realDealerId` is an existing, subscribed, non-placeholder dealer. */
+async function assertConnectableRealDealer(realDealerId: string): Promise<void> {
   const realDealer = await placeholderDealerRepository.findRealDealerById(realDealerId);
   if (!realDealer) {
     throw new AppError('Target dealer not found', StatusCodes.NOT_FOUND, 4040);
@@ -135,9 +118,56 @@ export async function connectPlaceholder(
       4098,
     );
   }
+}
 
-  await placeholderDealerRepository.upsertConnectGrant(realDealerId, agentId);
-  return placeholderDealerRepository.setPlaceholderConnection(id, realDealerId);
+/**
+ * Connects a placeholder dealer owned by the calling agent to a real subscribed dealer, and
+ * **migrates** everything the agent managed under the placeholder onto that real dealer — vehicle
+ * processes, assignments, references, and the khata ledger (merged with provenance) — atomically,
+ * then creates/reactivates the CONNECT grant and sets `connectedDealerId`. See
+ * {@link placeholderDealerRepository.connectPlaceholderTx}.
+ *
+ * @returns The migration result (updated placeholder + counts of what moved).
+ * @throws AppError 404 (4040) placeholder/target missing; 403 (4037) not an owned placeholder;
+ *   409 (4098) target is not a subscribed real dealer.
+ */
+export async function connectPlaceholder(
+  agentId: string,
+  id: string,
+  realDealerId: string,
+): Promise<placeholderDealerRepository.ConnectMigrationResult> {
+  await loadOwnedPlaceholder(agentId, id);
+  await assertConnectableRealDealer(realDealerId);
+  return placeholderDealerRepository.connectPlaceholderTx(id, realDealerId, agentId);
+}
+
+/**
+ * Super-admin variant: connects ANY agent's placeholder to a real subscribed dealer (using the
+ * placeholder's owner as the agent) and runs the same migration. The caller must be super-admin
+ * (enforced in the controller).
+ *
+ * @param placeholderId - The placeholder dealer id (any owner).
+ * @param realDealerId - The target real dealer id.
+ * @throws AppError 404 (4040) placeholder/target missing; 422 (4226) row is not a placeholder /
+ *   has no owner; 409 (4098) target is not a subscribed real dealer.
+ */
+export async function connectPlaceholderAsAdmin(
+  placeholderId: string,
+  realDealerId: string,
+): Promise<placeholderDealerRepository.ConnectMigrationResult> {
+  const placeholder = await placeholderDealerRepository.findPlaceholderById(placeholderId);
+  if (!placeholder) {
+    throw new AppError('Placeholder dealer not found', StatusCodes.NOT_FOUND, 4040);
+  }
+  if (!placeholder.isPlaceholder || !placeholder.ownerAgentId) {
+    throw new AppError('That dealer is not an agent placeholder', StatusCodes.UNPROCESSABLE_ENTITY, 4226);
+  }
+  await assertConnectableRealDealer(realDealerId);
+  return placeholderDealerRepository.connectPlaceholderTx(
+    placeholderId,
+    realDealerId,
+    placeholder.ownerAgentId,
+  );
 }
 
 /**

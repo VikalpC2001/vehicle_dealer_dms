@@ -12,6 +12,11 @@ const ADMIN_LOGIN_PASSWORD = 'Admin@1234';
 const DEALER_LOGIN_EMAIL = 'dealer@rto.test';
 const DEALER_LOGIN_PASSWORD = 'Dealer@1234';
 
+// --- Demo agent login (agent firm "Speedy RTO Agents") -------------------
+const AGENT_LOGIN_EMAIL = 'agent.user@rto.test';
+const AGENT_LOGIN_PASSWORD = 'Agent@1234';
+const AGENT_FIRM_EMAIL = 'agent.owner@rto.test';
+
 const SALT_ROUNDS = Number(process.env.BCRYPT_SALT_ROUNDS ?? 12);
 
 /** Document categories shown in the create-process wizard for the demo dealer. */
@@ -22,10 +27,13 @@ const UPLOAD_CATEGORIES = [
   { categoryName: 'Owner ID', bothSide: false, isRequired: false },
 ];
 
-/** Per-dealer kanban statuses (the API auto-creates these on dealer creation; we mirror them here). */
-const DEALER_STATUSES = [
-  { statusName: 'TO-DO', colour: '#3b82f6' },
+/** Per-agent kanban statuses (the API auto-creates these on agent creation; we mirror them here). */
+const AGENT_STATUSES = [
+  { statusName: 'To-Do', colour: '#3b82f6' },
   { statusName: 'In Progress', colour: '#eab308' },
+  { statusName: 'Inward', colour: '#a855f7' },
+  { statusName: 'Pending', colour: '#f97316' },
+  { statusName: 'Query', colour: '#ef4444' },
   { statusName: 'Complete', colour: '#22c55e' },
 ];
 
@@ -91,17 +99,7 @@ async function main() {
     create: { userId: user.userId, dealerId: dealer.dealerId },
   });
 
-  // 4) Dealer kanban statuses.
-  for (let i = 0; i < DEALER_STATUSES.length; i += 1) {
-    const s = DEALER_STATUSES[i];
-    await prisma.dealerStatus.upsert({
-      where: { dealerId_statusName: { dealerId: dealer.dealerId, statusName: s.statusName } },
-      update: { colour: s.colour, statusRank: i + 1 },
-      create: { dealerId: dealer.dealerId, statusName: s.statusName, colour: s.colour, statusRank: i + 1 },
-    });
-  }
-
-  // 5) Master upload categories + per-dealer "view in step" links.
+  // 4) Master upload categories + per-dealer "view in step" links.
   for (let i = 0; i < UPLOAD_CATEGORIES.length; i += 1) {
     const c = UPLOAD_CATEGORIES[i];
     const category = await prisma.uploadCategory.upsert({
@@ -129,7 +127,7 @@ async function main() {
     });
   }
 
-  // 6) A couple of dealer references for the wizard dropdown.
+  // 5) A couple of dealer references for the wizard dropdown.
   for (const ref of DEALER_REFERENCES) {
     const existing = await prisma.dealerReference.findFirst({
       where: { dealerId: dealer.dealerId, referenceName: ref.referenceName },
@@ -145,6 +143,54 @@ async function main() {
     }
   }
 
+  // 6) Demo agent (firm) + login user + link + statuses (mirrors the dealer above).
+  const agentHash = await bcrypt.hash(AGENT_LOGIN_PASSWORD, SALT_ROUNDS);
+  const agent = await prisma.agent.upsert({
+    where: { emailId: AGENT_FIRM_EMAIL },
+    update: {},
+    create: {
+      firmName: 'Speedy RTO Agents',
+      agentName: 'Ravi Agent',
+      displayName: 'Speedy',
+      address: 'RTO Circle',
+      city: 'Ahmedabad',
+      state: 'Gujarat',
+      pincode: '380015',
+      mobileNo: '9000000001',
+      emailId: AGENT_FIRM_EMAIL,
+      isSubscribe: true,
+    },
+  });
+
+  // 7) Agent login user (email-verified) linked to the agent (login then returns agentId -> agent UI).
+  const agentUser = await prisma.user.upsert({
+    where: { emailId: AGENT_LOGIN_EMAIL },
+    update: { password: agentHash, emailVerified: true },
+    create: {
+      userName: 'Ravi Owner',
+      emailId: AGENT_LOGIN_EMAIL,
+      password: agentHash,
+      mobileNo: '9000000002',
+      emailVerified: true,
+    },
+  });
+
+  await prisma.agentWiseUser.upsert({
+    where: { userId: agentUser.userId },
+    update: { agentId: agent.agentId },
+    create: { userId: agentUser.userId, agentId: agent.agentId },
+  });
+
+  // 8) Agent kanban statuses.
+  for (let i = 0; i < AGENT_STATUSES.length; i += 1) {
+    const s = AGENT_STATUSES[i];
+    await prisma.agentStatus.upsert({
+      where: { agentId_statusName: { agentId: agent.agentId, statusName: s.statusName } },
+      update: { colour: s.colour, statusRank: i + 1 },
+      create: { agentId: agent.agentId, statusName: s.statusName, colour: s.colour, statusRank: i + 1 },
+    });
+  }
+
   console.log('\n✅ Seed complete.');
   console.log('   Super-admin login:');
   console.log(`     email:    ${ADMIN_LOGIN_EMAIL}`);
@@ -153,6 +199,10 @@ async function main() {
   console.log(`     email:    ${DEALER_LOGIN_EMAIL}`);
   console.log(`     password: ${DEALER_LOGIN_PASSWORD}`);
   console.log(`   dealerId:   ${dealer.dealerId}`);
+  console.log('   Agent login:');
+  console.log(`     email:    ${AGENT_LOGIN_EMAIL}`);
+  console.log(`     password: ${AGENT_LOGIN_PASSWORD}`);
+  console.log(`   agentId:    ${agent.agentId}`);
 }
 
 main()

@@ -54,8 +54,11 @@ export const SUBSCRIPTION_STATUS = {
 
 export const NAV_ITEMS = [
   { label: 'Dashboard', path: '/dashboard', icon: 'LayoutDashboard' },
+  { label: 'Requests', path: '/requests', icon: 'Inbox' },
   { label: 'Dealers', path: '/dealers', icon: 'Store' },
   { label: 'Agents', path: '/agents', icon: 'UserCog' },
+  { label: 'RTO Services', path: '/rto-services', icon: 'ClipboardList' },
+  { label: 'Document Categories', path: '/document-categories', icon: 'FileStack' },
   { label: 'State & City', path: '/state-city', icon: 'MapPin' },
   { label: 'Users', path: '/users', icon: 'Users' },
   { label: 'Requests', path: '/requests', icon: 'FileText' },
@@ -68,15 +71,18 @@ export const NAV_ITEMS = [
 export const NAV_ITEMS_DEALER = [
   { label: 'Dashboard', path: '/dealer/dashboard', icon: 'LayoutDashboard' },
   { label: 'Vehicle Processes', path: '/dealer/processes', icon: 'Car' },
-  { label: 'Status Board', path: '/dealer/board', icon: 'LayoutGrid' },
+  { label: 'Task Board', path: '/dealer/board', icon: 'LayoutGrid' },
+  { label: 'Task History', path: '/dealer/tasks/history', icon: 'CheckCheck' },
   { label: 'Vehicle History', path: '/dealer/vehicle-history', icon: 'History' },
-  { label: 'Agents', path: '/dealer/agents', icon: 'UserCog' },
-  { label: 'Ledger', path: '/dealer/ledger', icon: 'BookOpen' },
+  { label: 'Agents', path: '/dealer/agents', icon: 'UserCog', capability: 'agents.manage' },
+  { label: 'Ledger', path: '/dealer/ledger', icon: 'BookOpen', capability: 'ledger.view' },
+  { label: 'Roles & Permissions', path: '/dealer/roles', icon: 'ShieldCheck', capability: 'roles.manage' },
   { label: 'Settings', path: '/dealer/settings', icon: 'Settings' },
 ]
 
 export const NAV_ITEMS_AGENT = [
   { label: 'Dashboard', path: '/agent/dashboard', icon: 'LayoutDashboard' },
+  { label: 'Task Board', path: '/agent/board', icon: 'LayoutGrid' },
   { label: 'Assignments', path: '/agent/assignments', icon: 'ClipboardList' },
   { label: 'Dealers', path: '/agent/dealers', icon: 'Store' },
   { label: 'Ledger', path: '/agent/ledger', icon: 'BookOpen' },

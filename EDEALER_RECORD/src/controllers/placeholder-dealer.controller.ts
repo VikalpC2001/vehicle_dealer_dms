@@ -6,10 +6,12 @@ import {
   updatePlaceholder,
   deletePlaceholder,
   connectPlaceholder,
+  connectPlaceholderAsAdmin,
   disconnectPlaceholder,
 } from '../services/placeholder-dealer.service';
 import { sendSuccess } from '../utils/api-response';
 import { resolveAgentIdFromRequest } from '../utils/agent-scope';
+import { assertSuperAdmin } from '../utils/dealer-scope';
 import type {
   CreatePlaceholderBody,
   UpdatePlaceholderBody,
@@ -88,6 +90,21 @@ export async function connectPlaceholderHandler(
   const body = req.body as ConnectBody;
   const placeholder = await connectPlaceholder(agentId, id, body.realDealerId);
   sendSuccess(res, 'Placeholder dealer connected', placeholder);
+}
+
+/**
+ * POST /placeholder-dealers/:id/connect-admin
+ * Super-admin connects any agent's placeholder to a real subscribed dealer (migrates data + ledger).
+ */
+export async function connectPlaceholderAsAdminHandler(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  assertSuperAdmin(req);
+  const { id } = req.params as unknown as ConnectParams;
+  const body = req.body as ConnectBody;
+  const result = await connectPlaceholderAsAdmin(id, body.realDealerId);
+  sendSuccess(res, 'Placeholder dealer connected', result);
 }
 
 /**

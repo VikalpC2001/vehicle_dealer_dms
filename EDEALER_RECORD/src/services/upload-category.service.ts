@@ -7,13 +7,22 @@ import { AppError } from '../utils/app-error';
 export interface CreateUploadCategoryInput {
   categoryName: string;
   bothSide: boolean;
+  processApi?: string | null;
 }
 
 /** Update input: full replace of mutable fields. */
 export interface UpdateUploadCategoryInput {
   categoryName: string;
   bothSide: boolean;
+  processApi?: string | null;
 }
+
+/** Trims a process API string; empty → null. */
+const normalizeProcessApi = (value: string | null | undefined): string | null => {
+  if (value === undefined || value === null) return null;
+  const t = value.trim();
+  return t.length === 0 ? null : t;
+};
 
 /**
  * Creates an upload category. `orderRank` is set to max existing + 1.
@@ -28,6 +37,7 @@ export async function createUploadCategory(
   return uploadCategoryRepository.createUploadCategory({
     categoryName: input.categoryName,
     bothSide: input.bothSide,
+    processApi: normalizeProcessApi(input.processApi),
   });
 }
 
@@ -67,6 +77,7 @@ export async function updateUploadCategory(
   return uploadCategoryRepository.updateUploadCategory(categoryId, {
     categoryName: input.categoryName,
     bothSide: input.bothSide,
+    processApi: normalizeProcessApi(input.processApi),
   });
 }
 

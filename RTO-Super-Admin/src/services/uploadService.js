@@ -1,6 +1,6 @@
 import axios from 'axios'
 import api from '@/services/api'
-import { IMAGE_MIME_TYPES, MAX_UPLOAD_MB } from '@/lib/vehicleProcess'
+import { DOCUMENT_MIME_TYPES, MAX_UPLOAD_MB } from '@/lib/vehicleProcess'
 
 function unwrap(response) {
   return response?.data?.data ?? response?.data ?? response
@@ -26,18 +26,19 @@ const EXT_BY_MIME = {
   'image/png': ['png'],
   'image/jpeg': ['jpg', 'jpeg'],
   'image/webp': ['webp'],
+  'application/pdf': ['pdf'],
 }
 
 /**
  * Client-side validation matching the backend's upload constraints, so bad files
- * never hit the network. Returns `{ ok }` or `{ ok: false, error }`.
+ * never hit the network. Accepts images and PDFs. Returns `{ ok }` or `{ ok: false, error }`.
  *
  * @param {File} file
  */
 export function validateImageFile(file) {
   if (!file) return { ok: false, error: 'No file selected.' }
-  if (!IMAGE_MIME_TYPES.includes(file.type)) {
-    return { ok: false, error: 'Only PNG, JPEG, or WEBP images are allowed.' }
+  if (!DOCUMENT_MIME_TYPES.includes(file.type)) {
+    return { ok: false, error: 'Only PNG, JPEG, WEBP, or PDF files are allowed.' }
   }
   if (file.size > MAX_UPLOAD_MB * 1024 * 1024) {
     return { ok: false, error: `File is too large (max ${MAX_UPLOAD_MB} MB).` }

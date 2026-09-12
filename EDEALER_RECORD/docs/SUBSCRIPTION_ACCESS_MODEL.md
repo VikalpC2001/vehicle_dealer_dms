@@ -50,7 +50,7 @@ The super admin onboards and subscribes dealers **and** agents (`Dealer.isSubscr
 | `AgentWiseUser` | user → agent link (login persona) | `userId @unique`, `agentId` |
 | `Dealer` (extended) | also represents placeholders | `isPlaceholder`, `ownerAgentId`, `connectedDealerId`, **`maxAgents`** (default 2); contact fields now nullable (kept `@unique` — Postgres allows multiple NULLs) |
 | `DealerAgent` | dealer↔agent grant (the M:N) | `dealerId`, `agentId`, `status` (`ACTIVE`/`REVOKED`), `source` (`DEALER_GRANT`/`CONNECT`), `@@unique([dealerId, agentId])` |
-| `AgentStatus` | per-agent RTO kanban statuses (mirrors `DealerStatus`) | seeded on agent create: To-Do, In Progress, Inward, Pending, Query, Complete |
+| `AgentStatus` | per-agent RTO kanban statuses (agent board columns) | seeded on agent create: To-Do, In Progress, Inward, Pending, Query, Complete |
 | `ProcessAssignment` | dealer assigns process+service to agent | `processId`, `dealerId` (denormalized), `agentId`, `serviceId`, `agentStatusId`, `status` (`OPEN`/`COMPLETED`/`CANCELLED`), `@@unique([processId, agentId, serviceId])` |
 
 The cap is computed as `count(DealerAgent where dealerId, status=ACTIVE, source=DEALER_GRANT)` and returned as `capInfo { maxAgents, used, overCap }` on `GET/POST /dealer-agents`.

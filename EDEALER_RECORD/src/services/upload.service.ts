@@ -6,6 +6,7 @@ import {
   assertFilenameMatchesMime,
   assertSafeFileKey,
   assertWithinMaxImageSize,
+  buildProcessScopedKey,
   generateFileName,
   normalizeContentType,
   validateMimeType,
@@ -84,6 +85,60 @@ export class UploadService {
       throw err;
     }
     return { publicUrl: this.storage.getPublicUrl(fileKey, publicOrigin) };
+  }
+
+  /**
+   * Best-effort move that never throws — returns `true` when the object was relocated. Used both to
+   * place a file in its per-process folder and to roll that move back if the surrounding DB write
+   * fails (so a retry finds the file where it started).
+   *
+   * @param sourceKey - Existing object key.
+   * @param destKey - Target object key.
+   */
+  async tryMove(sourceKey: string, destKey: string): Promise<boolean> {
+    if (sourceKey === destKey) {
+      return false;
+    }
+    try {
+      await this.storage.moveFile(sourceKey, destKey);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Moves a flat-uploaded file into its per-process folder `"{registration}_{processId}/"` and
+   * returns the new (folder-scoped) key to store on the photo record. Idempotent: a key that already
+   * contains a folder is returned unchanged without a move. On any move failure (e.g. the source is
+   * missing) the original flat key is returned so the reference stays valid. If the caller's DB write
+   * then fails it must roll the move back with {@link tryMove}(newKey, originalKey).
+   *
+   * Two photos on one process may reference the SAME uploaded file (one image tagged under two
+   * categories). The destination key is deterministic, so the first reference moves the bytes and the
+   * rest find the source already gone — for those, the folder key is still correct as long as the
+   * destination now holds the bytes, so we resolve to it instead of falling back to the stale flat key.
+   *
+   * @param fileKey - The flat upload key currently stored (e.g. `"<uuid>.jpg"`).
+   * @param registrationNumber - The process's vehicle registration number.
+   * @param processId - The vehicle process UUID.
+   */
+  async relocateToProcessFolder(
+    fileKey: string,
+    registrationNumber: string | null | undefined,
+    processId: string,
+  ): Promise<string> {
+    const destKey = buildProcessScopedKey(registrationNumber, processId, fileKey);
+    if (destKey === fileKey) {
+      return fileKey;
+    }
+    if (await this.tryMove(fileKey, destKey)) {
+      return destKey;
+    }
+    // Move failed (commonly: a sibling reference already moved the shared source). If the bytes are
+    // now at the destination, the folder key is authoritative; otherwise keep the original key.
+    const destHasBytes = await this.storage.fileExists(destKey).catch(() => false);
+    return destHasBytes ? destKey : fileKey;
   }
 }
 

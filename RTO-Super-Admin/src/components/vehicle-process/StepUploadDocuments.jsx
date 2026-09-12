@@ -139,6 +139,7 @@ export function StepUploadDocuments({
                       label={category.categoryName}
                       showLabel={false}
                       previewUrl={slot.single?.url ?? null}
+                      isPdf={Boolean(slot.isPdf)}
                       status={slot.status ?? 'idle'}
                       error={slot.error ?? null}
                       onSelect={(file) => onSelectRaw(category.categoryId, 'single', file)}

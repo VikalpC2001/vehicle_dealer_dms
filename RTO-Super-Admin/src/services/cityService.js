@@ -21,6 +21,18 @@ export const cityService = {
     return normalizeListResponse(data)
   },
 
+  /**
+   * GET /cities/ddl/:stateId — ALL cities for one state (unpaginated), for a dropdown.
+   * Returns `[{ id, cityName }]`.
+   */
+  async getDdl(stateId) {
+    const { data } = await api.get(`/cities/ddl/${stateId}`)
+    const list = unwrap(data)
+    return Array.isArray(list)
+      ? list.map((c) => ({ id: getCityId(c), cityName: c.cityName ?? c.name ?? c.label ?? '' }))
+      : []
+  },
+
   async create(payload) {
     const { data } = await api.post('/cities', payload)
     return unwrap(data)

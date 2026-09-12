@@ -21,6 +21,12 @@ const mobileField = z
   .optional()
   .or(z.literal(''))
 
+/** Required mobile — the RC book has no phone, so the dealer must enter the seller's mobile. */
+const requiredMobileField = z
+  .string()
+  .min(1, 'Mobile number is required')
+  .refine((v) => /^[+0-9][0-9 -]{6,19}$/.test(v), 'Enter a valid mobile number')
+
 /** Optional money string: empty OR a non-negative number with ≤2 decimals. */
 const priceField = z
   .string()
@@ -39,8 +45,8 @@ export const vehicleProcessSchema = z
   registrationDate: z.string().optional().or(z.literal('')),
   manufactureMonth: z.string().optional().or(z.literal('')),
   manufactureYear: z.string().optional().or(z.literal('')),
-  sellerName: z.string().max(255).optional().or(z.literal('')),
-  sellerMobile: mobileField,
+  sellerName: z.string().min(1, 'Seller name is required').max(255),
+  sellerMobile: requiredMobileField,
   sellerAddress: z.string().optional().or(z.literal('')),
   sellerReferenceId: z.string().optional().or(z.literal('')),
   purchasePrice: priceField,
@@ -48,6 +54,7 @@ export const vehicleProcessSchema = z
   buyerName: z.string().max(255).optional().or(z.literal('')),
   buyerMobile: mobileField,
   buyerAddress: z.string().optional().or(z.literal('')),
+  buyerReferenceId: z.string().optional().or(z.literal('')),
   salePrice: priceField,
   })
   .superRefine((val, ctx) => {
@@ -80,6 +87,7 @@ export const defaultVehicleProcessValues = {
   buyerName: '',
   buyerMobile: '',
   buyerAddress: '',
+  buyerReferenceId: '',
   salePrice: '',
 }
 
@@ -113,6 +121,7 @@ export function StepVerifyDetails({ defaultValues, references = [], onSubmit, fo
   }, [defaultValues, reset])
 
   const sellerReferenceId = watch('sellerReferenceId')
+  const buyerReferenceId = watch('buyerReferenceId')
   const addBuyer = watch('addBuyer')
 
   return (
@@ -153,12 +162,18 @@ export function StepVerifyDetails({ defaultValues, references = [], onSubmit, fo
       </section>
 
       <section className="space-y-4">
-        <h3 className="text-sm font-semibold text-muted-foreground">Seller / Owner</h3>
+        <div>
+          <h3 className="text-sm font-semibold text-muted-foreground">Seller / Owner</h3>
+          <p className="text-xs text-muted-foreground">
+            The vehicle owner is the seller — name &amp; address auto-fill from the RC book. The RC has no
+            phone, so enter the seller&apos;s mobile. Seller details are required.
+          </p>
+        </div>
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          <Field label="Name" id="sellerName" error={errors.sellerName?.message}>
+          <Field label="Name" id="sellerName" required error={errors.sellerName?.message}>
             <Input id="sellerName" placeholder="Owner name" {...register('sellerName')} />
           </Field>
-          <Field label="Mobile Number" id="sellerMobile" error={errors.sellerMobile?.message}>
+          <Field label="Mobile Number" id="sellerMobile" required error={errors.sellerMobile?.message}>
             <Input id="sellerMobile" placeholder="9876543210" {...register('sellerMobile')} />
           </Field>
           <Field label="Purchase price (₹)" id="purchasePrice" error={errors.purchasePrice?.message}>
@@ -168,6 +183,15 @@ export function StepVerifyDetails({ defaultValues, references = [], onSubmit, fo
         <Field label="Address" id="sellerAddress" error={errors.sellerAddress?.message}>
           <Textarea id="sellerAddress" placeholder="House no, street, area, city, state - pincode" {...register('sellerAddress')} />
         </Field>
+        {references.length > 0 && (
+          <RefSelect
+            id="sellerReferenceId"
+            label="Seller reference (optional)"
+            value={sellerReferenceId}
+            onValueChange={(val) => setValue('sellerReferenceId', val)}
+            references={references}
+          />
+        )}
       </section>
 
       <section className="space-y-4">
@@ -210,36 +234,18 @@ export function StepVerifyDetails({ defaultValues, references = [], onSubmit, fo
             <Field label="Address" id="buyerAddress" error={errors.buyerAddress?.message}>
               <Textarea id="buyerAddress" placeholder="Buyer address" {...register('buyerAddress')} />
             </Field>
+            {references.length > 0 && (
+              <RefSelect
+                id="buyerReferenceId"
+                label="Buyer reference (optional)"
+                value={buyerReferenceId}
+                onValueChange={(val) => setValue('buyerReferenceId', val)}
+                references={references}
+              />
+            )}
           </div>
         )}
       </section>
-
-      {references.length > 0 && (
-        <section className="space-y-4">
-          <h3 className="text-sm font-semibold text-muted-foreground">Reference (optional)</h3>
-          <div className="space-y-2 md:w-1/2">
-            <Label htmlFor="sellerReferenceId">Who referred this vehicle?</Label>
-            <Select
-              value={sellerReferenceId || NO_REFERENCE}
-              onValueChange={(value) =>
-                setValue('sellerReferenceId', value === NO_REFERENCE ? '' : value)
-              }
-            >
-              <SelectTrigger id="sellerReferenceId">
-                <SelectValue placeholder="Select a reference" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={NO_REFERENCE}>No reference</SelectItem>
-                {references.map((ref) => (
-                  <SelectItem key={ref.referenceId} value={ref.referenceId}>
-                    {ref.referenceName} ({ref.referenceNumber})
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        </section>
-      )}
     </form>
   )
 }
@@ -253,6 +259,31 @@ function Field({ label, id, error, required, children }) {
       </Label>
       {children}
       {error && <p className="text-sm text-destructive">{error}</p>}
+    </div>
+  )
+}
+
+/** A dealer-reference dropdown (shared by the seller and buyer reference fields). */
+function RefSelect({ id, label, value, onValueChange, references }) {
+  return (
+    <div className="space-y-2 md:w-1/2">
+      <Label htmlFor={id}>{label}</Label>
+      <Select
+        value={value || NO_REFERENCE}
+        onValueChange={(val) => onValueChange(val === NO_REFERENCE ? '' : val)}
+      >
+        <SelectTrigger id={id}>
+          <SelectValue placeholder="Select a reference" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value={NO_REFERENCE}>No reference</SelectItem>
+          {references.map((ref) => (
+            <SelectItem key={ref.referenceId} value={ref.referenceId}>
+              {ref.referenceName} ({ref.referenceNumber})
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
     </div>
   )
 }

@@ -23,8 +23,8 @@ Resolved origin: request `Host` (and `X-Forwarded-*` when `TRUST_PROXY=true`), o
 
 | Field        | Type   | Required | Validation |
 |-------------|--------|----------|------------|
-| fileName    | string | Yes      | Max 255; extension must match `contentType` (e.g. `.png` for `image/png`, `.jpg` or `.jpeg` for `image/jpeg`, `.webp` for `image/webp`) |
-| contentType | string | Yes      | One of: `image/png`, `image/jpeg`, `image/webp` |
+| fileName    | string | Yes      | Max 255; extension must match `contentType` (`.png`, `.jpg`/`.jpeg`, `.webp`, or `.pdf`) |
+| contentType | string | Yes      | One of: `image/png`, `image/jpeg`, `image/webp`, `application/pdf` (the raw `PUT` also byte-verifies the magic header) |
 
 **Response (201):**
 
@@ -41,6 +41,8 @@ Resolved origin: request `Host` (and `X-Forwarded-*` when `TRUST_PROXY=true`), o
 ```
 
 **Errors:** `4150` unsupported MIME; `4007` filename/extension mismatch; validation `4220`.
+
+> **Per-process folders.** Uploads are created with a **flat** `fileKey` (`<uuid>.<ext>`) because the process/vehicle are not known yet. When the file is later attached to a process (via `POST /vehicle-processes/start`'s `uploadPhotos[]`, or the `process-upload-photos` endpoints), the server **moves it into a per-process folder** `"{registrationNumber}_{processId}/<uuid>.<ext>"` and stores that folder-scoped key in `process_upload_photo.image_name`. The public URL/serving is unchanged (`/uploads/<key>` serves nested paths). Existing flat keys continue to resolve.
 
 ### PUT /api/v1/upload/file/:fileKey
 
@@ -492,11 +494,13 @@ Duplicate `serviceName` or `shortName` is not allowed on create or update.
 
 ---
 
+> **Super-admin only for writes.** `POST`, `PATCH /:id`, `PUT /order`, and `DELETE /:id` require a super-admin token (`4038` otherwise). The **list/get** endpoints stay available to any authenticated user (dealers list services to assign to agents).
+
 ### POST /api/v1/rto-services
 
-Create a new RTO service. `orderRank` is assigned server-side (max existing + 1).
+Create a new RTO service. `orderRank` is assigned server-side (max existing + 1). **Super-admin only** (`4038`).
 
-**Auth:** Bearer token required.
+**Auth:** Bearer token required (super-admin).
 
 **Request body:**
 
@@ -749,11 +753,11 @@ Delete an RTO service by ID.
 
 ## Upload categories
 
-Master list for grouping uploads (e.g. RC, insurance). Same patterns as RTO Services: JWT on all routes, auto `orderRank` on create (max existing + 1), `PUT .../order` to reorder. **List is not paginated.**
+Master list of document types for uploads (e.g. RC, insurance, Buyer ID). Auto `orderRank` on create (max existing + 1), `PUT .../order` to reorder. **List is not paginated.** **Writes (POST/PATCH/DELETE/order) are super-admin only** (`4038`); GET is available to any authenticated user (dealers/agents read the catalog).
 
-Per-dealer flags and ordering use **Dealer-wise upload categories** (see below).
+Per-dealer/agent flags and ordering use **Dealer-wise / Agent-wise upload categories** (see below). The **`processApi` (extraction API) is set here on the master** and inherited by dealers/agents — the create-process wizard reads it (via the per-tenant list, which returns the master's `processApi`) to auto-fill from an uploaded image; dealers/agents no longer set their own.
 
-**Auth:** Bearer token required on all endpoints below.
+**Auth:** Bearer token required on all endpoints below (writes additionally require super-admin).
 
 ### Model (Prisma `UploadCategory`)
 
@@ -761,15 +765,16 @@ Per-dealer flags and ordering use **Dealer-wise upload categories** (see below).
 - `categoryName` (string, max 255, **required**, **unique**)
 - `orderRank` (integer, assigned on create as **max(`orderRank`) + 1**)
 - `bothSide` (boolean, default `false`)
+- `processApi` (string, max 512, nullable) — OCR extraction endpoint (super-admin-managed)
 - `createdAt` / `updatedAt`
 
 ---
 
 ### POST /api/v1/upload-categories
 
-**Request body:** `categoryName` (string, required), `bothSide` (boolean, required). `orderRank` is server-assigned.
+**Super-admin.** **Request body:** `categoryName` (string, required), `bothSide` (boolean, required), `processApi` (string ≤512, optional/nullable). `orderRank` is server-assigned.
 
-**Error codes:** `4097` — category name already exists.
+**Error codes:** `4097` — category name already exists; `4038` — non-super-admin.
 
 ---
 
@@ -787,7 +792,7 @@ Full list, ordered by `orderRank` ascending.
 
 ### PATCH /api/v1/upload-categories/:id
 
-Body: `categoryName`, `bothSide` (both required). **Error codes:** `4051`, `4097`.
+**Super-admin.** Body: `categoryName`, `bothSide` (both required), `processApi` (optional/nullable). **Error codes:** `4051`, `4097`, `4038`.
 
 ---
 
@@ -897,9 +902,11 @@ Links a **user** to **exactly one dealer** across the system: **`userId` is uniq
 
 - `dwuId` (UUID, PK)
 - `userId` (FK to `User`, **globally unique** in this table), `dealerId` (FK to `Dealer`)
+- `isOwner` (bool, default `false`) — the account that **registered** the dealership is the OWNER (full access, sole role manager). Employees added via `with-user` stay `false`.
+- `roleId` (FK to `DealerRole`, nullable, `onDelete: SetNull`) — the assigned dealer role. `null` = the read-only default (`processes.view`). See **Dealer Roles & Permissions** below.
 - `createdAt`, `updatedAt`
 
-**Response shape:** Rows include nested `user` (`userId`, `userName`, `emailId`, `mobileNo` only; no password).
+**Response shape:** Rows include nested `user` (`userId`, `userName`, `emailId`, `mobileNo` only; no password) plus `isOwner` and `roleId`.
 
 ---
 
@@ -951,6 +958,121 @@ Creates a **brand-new user** and links them to the dealer in one call, so a deal
 
 ---
 
+## Dealer Roles & Permissions
+
+A per-dealer **fixed-capability** access model (NOT the generic `Module`/`Page`/`PageAction` RBAC tables — those stay dormant for the dealer app). A `DealerRole` holds a subset of a **curated capability catalog** (stable string keys). Access is resolved **fresh per request** (a role change takes effect without re-login):
+
+- **super-admin** or the dealership **OWNER** (`DealerWiseUser.isOwner`) → **all** capabilities.
+- an employee **with** a `roleId` → that role's `capabilities`.
+- an employee **without** a role → the read-only default `['processes.view']`.
+- anyone else (agent / unlinked) → no dealer capabilities.
+
+The access token carries a convenience `isDealerOwner` claim (dealer users only; `false` otherwise). The authoritative check is always the fresh resolver, exposed as `GET /dealer-roles/me` and the `requireCapability(cap)` route guard.
+
+**Auth:** Bearer JWT required on all routes.
+
+### Model (Prisma `DealerRole`, table `dealer_role`)
+
+- `roleId` (UUID, PK), `dealerId` (FK to `Dealer`)
+- `roleName` (string, **unique per dealer** — `@@unique([dealerId, roleName])`)
+- `capabilities` (`text[]`, capability keys from the catalog below)
+- `createdAt`, `updatedAt`
+
+**Capability catalog** (returned by `GET /dealer-roles/capabilities`), grouped for the FE checklist:
+
+| Group | Key | Label |
+|-------|-----|-------|
+| Vehicle Processes | `processes.view` | View processes |
+| Vehicle Processes | `processes.manage` | Create & edit processes/deal/persons/documents |
+| Tasks & Board | `tasks.viewAll` | See ALL tasks on the board (else only own) |
+| Tasks & Board | `tasks.manage` | Create, edit, assign & move tasks |
+| Configuration | `taskStatuses.manage` | Manage task-board statuses |
+| Configuration | `jobTemplates.manage` | Manage job templates |
+| Configuration | `references.manage` | Manage references |
+| Configuration | `documents.manage` | Manage document/upload config |
+| People | `employees.manage` | Add & remove employees |
+| People | `roles.manage` | Manage roles & permissions |
+| Agents & Money | `agents.manage` | Manage agents |
+| Agents & Money | `ledger.view` | View khata/ledger |
+
+---
+
+### GET /api/v1/dealer-roles/capabilities
+
+Returns the capability catalog for the FE checklist. **Any authenticated dealer user.**
+
+**Response (200):** `{ "capabilities": [ { "key", "label", "group" }, ... ] }`.
+
+---
+
+### GET /api/v1/dealer-roles/me
+
+Returns the caller's effective capabilities, resolved fresh. **Any authenticated dealer user.**
+
+**Response (200):** `{ "isOwner": boolean, "capabilities": string[] }`.
+
+---
+
+### GET /api/v1/dealer-roles
+
+Lists the caller's dealer roles (newest first) with member counts. **Gated by `roles.manage`** (the OWNER passes since the OWNER holds every capability).
+
+**Query:** `dealerId` (UUID, optional) — normal dealer users use the JWT; a super-admin must pass it.
+
+**Response (200):** array of `{ roleId, dealerId, roleName, capabilities, memberCount, createdAt, updatedAt }`.
+
+**Error codes:** `4067` — lacks `roles.manage`; `4032`/`4033`/`4039`/`4226` — dealer scope.
+
+---
+
+### POST /api/v1/dealer-roles
+
+Creates a role for the caller's dealer. **Gated by `roles.manage`.**
+
+**Body:** `roleName` (string, 1–255), `capabilities` (string[] of catalog keys; may be empty; de-duplicated). `dealerId` (UUID, optional — super-admin only).
+
+**Response (201):** the created role.
+
+**Error codes:** `4220` — invalid body / unknown capability key (Zod enum); `4068` — unknown capability key (service guard); `4090` — duplicate `roleName` for the dealer; `4067` — lacks `roles.manage`; `4032`/`4033`/`4039`/`4226` — dealer scope.
+
+---
+
+### PATCH /api/v1/dealer-roles/:id
+
+Updates a role owned by the caller's dealer. **Gated by `roles.manage`.**
+
+**Path:** `id` = `roleId`. **Body:** `roleName?` and/or `capabilities?` (at least one required).
+
+**Response (200):** the updated role.
+
+**Error codes:** `4220` — invalid body; `4068` — unknown capability key; `4090` — duplicate `roleName`; `4040` — role not found; `4034` — wrong dealer; `4067` — lacks `roles.manage`.
+
+---
+
+### DELETE /api/v1/dealer-roles/:id
+
+Deletes a role owned by the caller's dealer. Members keep their link but drop to the read-only default (`roleId` → `null` via `onDelete: SetNull`). **Gated by `roles.manage`.**
+
+**Path:** `id` = `roleId`.
+
+**Response (200):** `{}`.
+
+**Error codes:** `4040` — role not found; `4034` — wrong dealer; `4067` — lacks `roles.manage`.
+
+---
+
+### POST /api/v1/dealer-roles/assign
+
+Assigns a role to an employee, or clears it (`roleId: null` → read-only default). Both the user and the role must belong to the caller's dealer. **Gated by `roles.manage`.**
+
+**Body:** `userId` (UUID), `roleId` (UUID **or `null`**). `dealerId` (UUID, optional — super-admin only).
+
+**Response (200):** the updated `DealerWiseUser` row (with nested `user`, `isOwner`, `roleId`).
+
+**Error codes:** `4034` — user not a member of your dealer; `4040` — role not found for your dealer; `4067` — lacks `roles.manage`; `4032`/`4033`/`4039`/`4226` — dealer scope.
+
+---
+
 ## Dealers
 
 CRUD for dealers. All fields are required. `emailId`, `mobileNo`, and `whatsappNo` are unique. `isSubscribe` defaults to `false` on create.
@@ -978,7 +1100,7 @@ From Prisma `Dealer` model:
 
 ### POST /api/v1/dealers
 
-Create a new dealer. **Automatically creates three default dealer statuses** for this dealer: "TO-DO" (blue, rank 1), "In Progress" (Yellow, rank 2), and "Complete" (green, rank 3).
+Create a new dealer.
 
 **Auth:** Bearer token required.
 
@@ -1036,6 +1158,51 @@ Update an existing dealer. All body fields required (including `isSubscribe`).
 
 ---
 
+### PATCH /api/v1/dealers/:id/agent-slots
+
+**Super-admin only.** Set or raise a dealer's active-agent slot limit (`maxAgents`) — the manual "addon" grant today, and the single **reusable seam** a future self-serve addon purchase will call. Rejects a target below the dealer's current usage (`4232`).
+
+**Auth:** Bearer token required; caller must be super-admin (`4038` otherwise).
+
+**Path params:** `id` = `dealerId` (UUID).
+
+**Request body:** exactly **one** of:
+
+- `maxAgents` (int ≥ 0) — set the cap to an absolute value, or
+- `deltaSlots` (int ≥ 1) — add this many slots to the current cap.
+
+```json
+{ "maxAgents": 3 }
+```
+
+**Response (200):**
+
+```json
+{
+  "statusCode": 200,
+  "message": "Agent slots updated",
+  "data": { "dealerId": "uuid", "maxAgents": 3, "used": 2 }
+}
+```
+
+**Error codes:** `4038` — not a super-admin; `4043` — dealer not found; `4232` — target below current active usage; `4220` — neither/both of `maxAgents`/`deltaSlots` provided.
+
+---
+
+### PATCH /api/v1/dealers/:id/subscription
+
+**Super-admin only.** Toggle a dealer's subscription (`isSubscribe`). A subscribed dealer gets the dealer site and can be a **connect target** for agents.
+
+**Auth:** Bearer token required; super-admin (`4038` otherwise). **Path params:** `id` = `dealerId`. **Request body:** `isSubscribe` (boolean, required).
+
+```json
+{ "isSubscribe": true }
+```
+
+**Response (200):** `data` is `{ id, isSubscribe }`. **Error codes:** `4038` — not a super-admin; `4043` — dealer not found.
+
+---
+
 ### DELETE /api/v1/dealers/:id
 
 Delete a dealer by ID.
@@ -1046,11 +1213,11 @@ Delete a dealer by ID.
 
 ---
 
-## Dealer Statuses
+## Dealer Task Statuses
 
-Dealer statuses are **managed per dealer**. **statusName is unique per dealer** (not globally). **statusRank is per dealer** and is determined by the order of the `statusData` array in the sync API (1, 2, 3, …). Creating a dealer automatically adds three default statuses (TO-DO, In Progress, Complete).
+Per-dealer **task-board columns** (Jira-like task statuses). **statusName is unique per dealer** (not globally). **statusRank is per dealer** and is determined by the order of the `statusData` array in the sync API (1, 2, 3, …). Each column carries an `isDone` flag marking terminal columns (moving a task into a done column sets its `completedAt`).
 
-**Auth:** All dealer status endpoints require a valid JWT. Send it in the header: `Authorization: Bearer <token>`.
+**Auth:** All dealer task status endpoints require a valid JWT. Send it in the header: `Authorization: Bearer <token>`.
 
 ### Model
 
@@ -1059,13 +1226,14 @@ Dealer statuses are **managed per dealer**. **statusName is unique per dealer** 
 - `statusName` (string, **required**; **unique per dealer**)
 - `colour` (string, **required**, max 50; not unique)
 - `statusRank` (integer, **required**, per-dealer display order)
+- `isDone` (boolean, default `false`; marks terminal/done columns)
 - `createdAt` / `updatedAt` (timestamps, managed by DB)
 
 ---
 
-### POST /api/v1/dealer-statuses
+### POST /api/v1/dealer-task-statuses
 
-Sync all statuses for a dealer in a single request. This endpoint **creates, updates, deletes, and reorders** statuses for the specified dealer.
+Sync all task statuses for a dealer in a single request. This endpoint **creates, updates, deletes, and reorders** task statuses for the specified dealer.
 
 **Auth:** Bearer token required.
 
@@ -1077,40 +1245,37 @@ Sync all statuses for a dealer in a single request. This endpoint **creates, upd
     {
       "statusId": "e49e3b84-2071-4358-8caf-949f19acd8c9",
       "statusName": "TO-DO",
-      "colour": "blue"
+      "colour": "blue",
+      "isDone": false
     },
     {
-      "statusId": "38ca593f-5e2c-4404-ae52-9a1b9c32950d",
       "statusName": "In Progress",
-      "colour": "Yellow"
+      "colour": "Yellow",
+      "isDone": false
     },
     {
-      "statusId": "07aa546f-cb40-4881-8809-d5bf15c91974",
       "statusName": "Complete",
-      "colour": "green"
-    },
-    {
-      "statusName": "Pending",
-      "colour": "Red"
+      "colour": "green",
+      "isDone": true
     }
   ]
 }
 ```
 
-- If `statusId` is present and belongs to this dealer: update `statusName`, `colour`, and assign `statusRank` based on array order.
-- If `statusId` is omitted: create a new status for this dealer with the given `statusName`, `colour`, and `statusRank`.
-- Any existing status for this dealer **not present** in `statusData` is **deleted**.
+- If `statusId` is present and belongs to this dealer: update `statusName`, `colour`, `isDone`, and assign `statusRank` based on array order.
+- If `statusId` is omitted: create a new task status for this dealer with the given `statusName`, `colour`, `isDone` (default `false`), and `statusRank`.
+- Any existing task status for this dealer **not present** in `statusData` is **deleted**.
 - The order of `statusData` defines `statusRank` (1, 2, 3, …).
 
-**Response (200):** `data` is the final array of statuses for that dealer, ordered by `statusRank`.
+**Response (200):** `data` is the final array of task statuses for that dealer, ordered by `statusRank`. Each item includes `statusId`, `dealerId`, `statusName`, `colour`, `statusRank`, `isDone`, `createdAt`, `updatedAt`.
 
-**Error codes:** `4097` — status name already exists for this dealer; `4221` — no statuses provided; `4222` — duplicate statusName in payload; `4032`–`4033`, `4226` — dealer scope.
+**Error codes:** `4221` — no statuses provided; `4222` — duplicate statusName in payload; `4090` — duplicate statusName conflict at the database (P2002); `4032`–`4033`, `4226` — dealer scope.
 
 ---
 
-### PUT /api/v1/dealer-statuses/order
+### PUT /api/v1/dealer-task-statuses/order
 
-Update `statusRank` for multiple statuses for a dealer in one request. This endpoint only changes the order (ranks); it does not create, delete, or rename statuses.
+Update `statusRank` for multiple task statuses for a dealer in one request. This endpoint only changes the order (ranks); it does not create, delete, rename, or change `isDone`.
 
 **Auth:** Bearer token required.
 
@@ -1126,31 +1291,216 @@ Update `statusRank` for multiple statuses for a dealer in one request. This endp
 ```
 
 - All `statusId`s must belong to the given dealer.
-- Only the provided statuses are reordered; other statuses for the dealer keep their existing `statusRank`.
+- Only the provided task statuses are reordered; other statuses for the dealer keep their existing `statusRank`.
 
-**Response (200):** `data` is the full array of statuses for that dealer, ordered by updated `statusRank`.
+**Response (200):** `data` is the full array of task statuses for that dealer, ordered by updated `statusRank`.
 
 **Error codes:** `4221` — no statuses provided; `4223` — one or more statuses do not belong to this dealer; `4032`–`4033`, `4226` — dealer scope.
 
 ---
 
-### GET /api/v1/dealer-statuses
+### GET /api/v1/dealer-task-statuses
 
-Get all statuses for the **dealer in the JWT**, ordered by `statusRank`. No query parameters.
+Get all task statuses for the **dealer in the JWT**, ordered by `statusRank`. No query parameters.
 
 **Auth:** Bearer token required.
+
+**Response (200):** `data` is an array of task statuses (each with `statusId`, `dealerId`, `statusName`, `colour`, `statusRank`, `isDone`, `createdAt`, `updatedAt`).
 
 **Error codes:** `4033` / `4226` — missing dealer context for your role.
 
 ---
 
-### GET /api/v1/dealer-statuses/:dealerId
+### GET /api/v1/dealer-task-statuses/:dealerId
 
-Get all statuses for a dealer, ordered by `statusRank`. For non-`ADMIN`, **`:dealerId` must match the JWT `dealerId`**.
+Get all task statuses for a dealer, ordered by `statusRank`. For non-`ADMIN`, **`:dealerId` must match the JWT `dealerId`**.
 
 **Auth:** Bearer token required.
 
-**Error codes:** `4032` — path dealer does not match session; otherwise returns empty array if the dealer has no statuses.
+**Error codes:** `4032` — path dealer does not match session; otherwise returns empty array if the dealer has no task statuses.
+
+---
+
+## Dealer Task Templates
+
+Per-dealer **predefined job/task catalog** (e.g. "PUC", "Insurance", "Name transfer") picked when creating a task. `templateName` is **required** and must be **unique per dealer** (but not globally). Templates always belong to a dealer.
+
+**Auth:** All dealer task template endpoints require a valid JWT. Send it in the header: `Authorization: Bearer <token>`.
+
+### Model
+
+From Prisma `DealerTaskTemplate` model:
+
+- `templateId` (UUID, PK)
+- `dealerId` (UUID, **required**, FK to Dealer; cascade delete)
+- `templateName` (string, **required**, max 255; unique per dealer)
+- `createdAt` / `updatedAt` (timestamps, managed by DB)
+
+---
+
+### POST /api/v1/dealer-task-templates
+
+Create a new dealer task template.
+
+**Auth:** Bearer token required.
+
+**Request body:**
+
+| Field        | Type   | Required | Validation                          |
+|--------------|--------|----------|-------------------------------------|
+| dealerId     | string | No       | From JWT for normal users; **required for `ADMIN`** |
+| templateName | string | Yes      | Min 1, max 255; unique per dealer   |
+
+**Response (201):** `data` is the created dealer task template (includes `templateId`, `dealerId`, `templateName`, `createdAt`, `updatedAt`).
+
+**Error codes:** `4090` — template name already exists for this dealer; `4032`–`4033`, `4226` — dealer scope.
+
+---
+
+### GET /api/v1/dealer-task-templates
+
+List dealer task templates **for a specific dealer** (paginated), ordered by `templateName` ascending.
+
+**Auth:** Bearer token required.
+
+**Query params:**
+
+| Param    | Type   | Required | Description                                 |
+|----------|--------|----------|---------------------------------------------|
+| page     | number | No       | 1-based page index (default 1)             |
+| limit    | number | No       | Items per page (default 10, max 100)       |
+| dealerId | string | No       | From JWT when omitted; **`ADMIN` must pass `dealerId`** |
+
+**Response (200):** `data.data` = array of task templates for the given dealer; `data.meta` = `{ total, page, limit, totalPages }`.
+
+**Error codes:** `4032`–`4033`, `4226` — dealer scope.
+
+---
+
+### GET /api/v1/dealer-task-templates/:id
+
+Get a single dealer task template by ID.
+
+**Auth:** Bearer token required.
+
+**Error codes:** `4066` — dealer task template not found; `4034` — wrong dealer.
+
+---
+
+### PATCH /api/v1/dealer-task-templates/:id
+
+Update an existing dealer task template. Only `templateName` can be updated.
+
+**Auth:** Bearer token required.
+
+**Request body:**
+
+| Field        | Type   | Required | Validation                        |
+|--------------|--------|----------|-----------------------------------|
+| templateName | string | Yes      | Min 1, max 255; unique per dealer |
+
+**Response (200):** `data` is the updated dealer task template.
+
+**Error codes:** `4066` — dealer task template not found; `4090` — template name already exists for this dealer; `4034` — wrong dealer.
+
+---
+
+### DELETE /api/v1/dealer-task-templates/:id
+
+Delete a dealer task template by ID.
+
+**Auth:** Bearer token required.
+
+**Response (200):** `data` is `{}`.
+
+**Error codes:** `4066` — dealer task template not found; `4034` — wrong dealer.
+
+---
+
+## Dealer Tags
+
+Per-dealer **Finder-style tag master** (coloured labels). A `VehicleProcess` can carry **multiple** tags via the `ProcessTag` join. `tagName` is **required** and must be **unique per dealer** (`@@unique([dealerId, tagName])`). `colour` is an optional swatch.
+
+**Auth:** All dealer tag endpoints require a valid JWT. Send it in the header: `Authorization: Bearer <token>`. Scope is **agent-aware** — dealers use their own token dealer; agents/super-admin pass an explicit `dealerId` (query on GET, body on POST) for a dealer they manage.
+
+### Model
+
+From Prisma `DealerTag` model:
+
+- `tagId` (UUID, PK)
+- `dealerId` (UUID, **required**, FK to Dealer; cascade delete)
+- `tagName` (string, **required**, max 255; unique per dealer)
+- `colour` (string, optional, max 50)
+- `createdAt` / `updatedAt` (timestamps, managed by DB)
+
+---
+
+### GET /api/v1/dealer-tags
+
+List the resolved dealer's tags, ordered by `tagName` ascending. Returns a plain array (not paginated).
+
+**Auth:** Bearer token required.
+
+**Query params:**
+
+| Param    | Type   | Required | Description                                                        |
+|----------|--------|----------|--------------------------------------------------------------------|
+| dealerId | string | No       | From JWT for a dealer; **agents/super-admin pass a managed dealer** |
+
+**Response (200):** `data` = array of tags (`tagId`, `dealerId`, `tagName`, `colour`, `createdAt`, `updatedAt`).
+
+**Error codes:** `4032` — dealerId does not match your session; `4033` — account not linked to a dealer/agent; `4039` — agent does not manage this dealer; `4226` — dealerId required for this role.
+
+---
+
+### POST /api/v1/dealer-tags
+
+Create a new tag for the resolved dealer.
+
+**Auth:** Bearer token required.
+
+**Request body:**
+
+| Field    | Type   | Required | Validation                                              |
+|----------|--------|----------|--------------------------------------------------------|
+| dealerId | string | No       | From JWT for a dealer; **agents/super-admin must pass a managed dealer** |
+| tagName  | string | Yes      | Trimmed, min 1, max 255; unique per dealer             |
+| colour   | string | No       | Trimmed, max 50                                        |
+
+**Response (201):** `data` is the created tag.
+
+**Error codes:** `4090` — duplicate `tagName` for this dealer (Prisma P2002); `4032`/`4033`/`4039`/`4226` — dealer scope.
+
+---
+
+### PATCH /api/v1/dealer-tags/:id
+
+Update a tag's `tagName` and/or `colour`. The tag is loaded first and its `dealerId` is checked against the caller's managed dealer.
+
+**Auth:** Bearer token required.
+
+**Request body:**
+
+| Field   | Type   | Required | Validation                                  |
+|---------|--------|----------|---------------------------------------------|
+| tagName | string | No       | Trimmed, min 1, max 255; unique per dealer  |
+| colour  | string | No       | Trimmed, max 50                             |
+
+**Response (200):** `data` is the updated tag.
+
+**Error codes:** `4069` — dealer tag not found; `4090` — duplicate `tagName` for this dealer; `4034` — wrong dealer; `4039` — agent does not manage this dealer.
+
+---
+
+### DELETE /api/v1/dealer-tags/:id
+
+Delete a tag by ID. Its `ProcessTag` join rows cascade automatically. The tag is loaded first and its `dealerId` is checked against the caller's managed dealer.
+
+**Auth:** Bearer token required.
+
+**Response (200):** `data` is `{}`.
+
+**Error codes:** `4069` — dealer tag not found; `4034` — wrong dealer; `4039` — agent does not manage this dealer.
 
 ---
 
@@ -1562,16 +1912,20 @@ Get a city by ID.
 
 ## Vehicle Processes
 
-Vehicle processes store a process record (vehicle + dealer + status + date) and its associated persons (buyer/seller) in one workflow.
+Vehicle processes store a process record (vehicle + dealer + date) and its associated persons (buyer/seller) in one workflow.
 
 **Auth:** All vehicle process endpoints require a valid JWT. Send it in the header: `Authorization: Bearer <token>`.
+
+**Managed-dealer scope (dealer *or* agent):** these endpoints (and the process children — `/persons`, `/process-tasks`, `/process-expenses`, `/process-upload-photos`) resolve the target dealer via the unified **managed-dealer** scope:
+- **Dealer** caller → their own token `dealerId` (an explicit `dealerId` must match, else `4032`).
+- **Agent** caller → must pass an explicit `dealerId` (body on writes, `?dealerId=` on reads) they **manage**: a placeholder they own, or a real dealer with an ACTIVE `DealerAgent` grant. Not managed → `4039`. Creating/starting a process for an **owned placeholder** additionally requires the agent's **own subscription** (`Agent.isSubscribe`), else `4020` (402); a **granted real dealer** is covered by the dealer's subscription (no agent-subscription needed).
+- **Super-admin** → optional `?dealerId=` to narrow; sees all otherwise.
 
 ### Model (simplified)
 
 - `processId` (UUID, PK)
 - `vehicleId` (UUID, required by API)
 - `dealerId` (UUID, required by API)
-- `status` (string, required by API)
 - `processDate` (timestamp, required by API)
 - `persons[]` (array of persons created for this process)
 
@@ -1595,9 +1949,8 @@ Starts a workflow: **upserts** a **Vehicle** by `registrationNumber`, then creat
 **Process**
 
 - `dealerId` is taken from the access token. Optional **`dealerId` in the JSON body** is required for **`ADMIN`** (same pattern as other dealer-scoped routes); non-admin users must not send a conflicting `dealerId`.
-- `status` is set to **`Pending`**.
 - **`persons`** (optional): omit the field, send `[]`, or omit entries to create **no** `Person` rows. If you send one or more person objects (same shape as **`POST /api/v1/vehicle-processes`** — `personName`, `mobileNumber`, `personType` `SELLER` | `BUYER`, optional `address`), they are created with the process in one transaction. **At most one SELLER and one BUYER** per process.
-- **Prices** (optional): `purchasePrice` (what the dealer paid the SELLER) and `salePrice` (what the BUYER paid) — positive, ≤2 decimals, stored `Decimal(14,2)`; plus `priceCurrency` (default `INR`). **Cross-field invariant:** `purchasePrice` requires a SELLER and `salePrice` requires a BUYER, else **422 `4220`**. Prices live on the dealer-scoped process (private per dealer) and feed **`GET /vehicles/history`**.
+- **Prices** (optional): `purchasePrice` (what the dealer paid the SELLER) and `salePrice` (what the BUYER paid) — non-negative, ≤2 decimals, stored `Decimal(14,2)`; plus `priceCurrency` (default `INR`). Prices are **independent** of the persons — either may be recorded whether or not a seller/buyer person is present. They live on the dealer-scoped process (private per dealer) and feed **`GET /vehicles/history`**.
 - **`uploadPhotos`** (optional): omit or `[]` to skip. Each item: `{ category, imageName }` (same fields as **`POST /api/v1/process-upload-photos`**, without `processId` — assigned automatically).
 - **`processReferences`** (optional): omit or `[]` to skip. Each item: `{ referenceId, referenceType }` where `referenceType` is `BUY` (buyer reference) or `SELL` (seller reference). `referenceId` must exist in **`dealer_references`** and belong to the dealer when scoped. At most one row per `referenceType` per request.
 - `processDate` defaults to **now** if omitted; otherwise send an ISO-8601 string.
@@ -1638,9 +1991,9 @@ Starts a workflow: **upserts** a **Vehicle** by `registrationNumber`, then creat
 }
 ```
 
-**Response (201):** `data` = `{ vehicle, process, vehicleCreated, vehicleUpdated, uploadPhotos, processReferences }` where `process` includes `persons`, `processUploadPhotos`, and `processReferences`; top-level `uploadPhotos` / `processReferences` mirror the nested arrays for convenience.
+**Response (201):** `data` = `{ vehicle, process, vehicleCreated, vehicleUpdated, uploadPhotos, processReferences }` where `process` includes `persons`, `processUploadPhotos`, and `processReferences`; top-level `uploadPhotos` / `processReferences` mirror the nested arrays for convenience. The new process is created **OPEN** (`status: null`).
 
-**Error codes:** `4043` — dealer not found; `4057` — dealer reference not found; `4035` — reference not in dealer scope; `4100`–`4102` — vehicle uniqueness conflicts on create/update; `4032`–`4033`, `4226` — dealer scope; `4227` — invalid `processDate`; `4228` — duplicate `referenceType` in `processReferences`.
+**Error codes:** `4043` — dealer not found; `4057` — dealer reference not found; `4035` — reference not in dealer scope; `4100`–`4102` — vehicle uniqueness conflicts on create/update; `4032`–`4033`, `4226` — dealer scope; `4227` — invalid `processDate`; `4228` — duplicate `referenceType` in `processReferences`; **`4113`** — an **OPEN** (status-less) process already exists for this vehicle under this dealer (set its status first — at most one open process per vehicle per dealer).
 
 ---
 
@@ -1650,12 +2003,11 @@ Create a vehicle process and its persons in **one request**.
 
 **Auth:** Bearer token required.
 
-**Request body:** `vehicleId`, `status`, `processDate`, `persons` required. **`dealerId` optional** — from JWT for normal users; **`ADMIN` must send `dealerId`**.
+**Request body:** `vehicleId`, `processDate`, `persons` required. **`dealerId` optional** — from JWT for normal users; **`ADMIN` must send `dealerId`**.
 
 ```json
 {
   "vehicleId": "uuid",
-  "status": "TO-DO",
   "processDate": "2026-03-15T10:30:00.000Z",
   "persons": [
     {
@@ -1674,19 +2026,44 @@ Create a vehicle process and its persons in **one request**.
 }
 ```
 
-**Response (201):** created process including `persons[]`.
+**Response (201):** created process including `persons[]`. The process is created **OPEN** (`status: null`).
 
-**Error codes:** `4047` — vehicle not found; `4043` — dealer not found; `4032`–`4033`, `4226` — dealer scope.
+**Error codes:** `4047` — vehicle not found; `4043` — dealer not found; `4032`–`4033`, `4226` — dealer scope; **`4113`** — an **OPEN** (status-less) process already exists for this vehicle under this dealer (set its status first — at most one open process per vehicle per dealer).
 
 ---
 
 ### GET /api/v1/vehicle-processes
 
-List vehicle processes (paginated). Each item includes `persons[]`.
+List vehicle processes (paginated). Each item includes `persons[]`, `vehicle`, `tags[]` (`[{ tagId, tagName, colour }]`, ordered by `tagName`), and the process **`status`** (`"SOLD"` | `"COMPLETE"` | `"SCRAP"` | `null`, where `null` = OPEN).
 
 **Auth:** Bearer token required.
 
-**Query params:** `page`, `limit` (optional).
+**Query params:** `page`, `limit` (optional). Optional **`search`** — free-text filter over the vehicle's registration number (matched space/punctuation-insensitively, since numbers are stored normalized) and any linked person's name (case-insensitive). Optional **`tagId`** (uuid) — narrows the list to processes carrying that tag (server-side, so pagination totals stay correct). Optional **`status`** — one of `SOLD` | `COMPLETE` | `SCRAP` | `OPEN`; `OPEN` matches status-less (open) processes, a terminal value matches that status exactly. `search`, `tagId`, and `status` are AND-ed. Agents pass `dealerId` (a dealer they manage) to scope the list.
+
+---
+
+### GET /api/v1/vehicle-processes/agent-board
+
+The **caller agent's own** (agent-created) processes for the agent board — every process on a placeholder dealer the agent owns, each carrying its **agent-kanban status**, vehicle registration, source dealer summary, and tags. Non-agent callers receive an empty list. Pairs with `GET /process-assignments/agent` (dealer-assigned work) to build the unified agent board.
+
+**Auth:** Bearer token required (agent).
+
+**Response (200):** `data` is an array of:
+
+```json
+{
+  "processId": "uuid",
+  "agentStatusId": "uuid | null",
+  "agentStatus": { "statusId": "uuid", "statusName": "To-Do", "colour": "#2563EB" },
+  "vehicle": { "registrationNumber": "MH12AB1234" },
+  "dealer": { "dealerId": "uuid", "firmName": "Placeholder Motors" },
+  "tags": [{ "tagId": "uuid", "tagName": "Urgent", "colour": "#EF4444" }],
+  "createdAt": "2026-07-26T12:00:00.000Z"
+}
+```
+
+- **`agentStatus`** is `null` until a status is set; new agent-created processes default to the agent's lowest-ranked status.
+- **`tags`** — the process's `DealerTag`s via the `ProcessTag` join, `[{ tagId, tagName, colour }]` ordered by `tagName` (`[]` when none).
 
 ---
 
@@ -1715,7 +2092,14 @@ Returns **vehicle**, **owner** (seller), **buyer**, **references**, and **photos
   "processId": "uuid",
   "vehicleId": "uuid",
   "dealerId": "uuid",
-  "status": "Pending",
+  "agentStatusId": "uuid | null",
+  "status": "SOLD | COMPLETE | SCRAP | null",
+  "trackingNumber": "IND123456789 | null",
+  "receipt": {
+    "imageName": "MH12AB1234_<processId>/<uuid>.pdf",
+    "photoUrl": "http://localhost:4002/uploads/MH12AB1234_<processId>/<uuid>.pdf",
+    "uploadedAt": "2026-07-28T12:00:00.000Z"
+  },
   "processDate": "2026-04-05T12:00:00.000Z",
   "vehicle": {
     "vehicleId": "uuid",
@@ -1765,14 +2149,19 @@ Returns **vehicle**, **owner** (seller), **buyer**, **references**, and **photos
       "imageName": "abc-uuid.png",
       "photoUrl": "http://localhost:4002/uploads/abc-uuid.png"
     }
+  ],
+  "tags": [
+    { "tagId": "uuid", "tagName": "Urgent", "colour": "#EF4444" }
   ]
 }
 ```
 
+- **`status`** — the process's fixed lifecycle status: `SOLD` / `COMPLETE` / `SCRAP`, or `null` (OPEN, unset).
 - **`owner`** — first `SELLER` person on the process, or `null`.
 - **`buyer`** — first `BUYER` person, or `null`.
 - **`references.seller` / `references.buyer`** — linked `dealer_references` by `referenceType` `SELL` / `BUY`, or `null`.
 - **`photos`** — rows from `process_upload_photo` and `process_upload_image`. `photoUrl` is built from stored file keys using the request host (same rules as upload `publicUrl`); full URLs stored in DB are returned unchanged.
+- **`tags`** — the process's `DealerTag`s via the `ProcessTag` join, ordered by `tagName` (`[]` when none).
 
 **Error codes:** `4050` — vehicle process not found; `4034` — wrong dealer.
 
@@ -1780,13 +2169,117 @@ Returns **vehicle**, **owner** (seller), **buyer**, **references**, and **photos
 
 ### PATCH /api/v1/vehicle-processes/:id
 
-Update a vehicle process and its persons in **one request**. Persons are replaced with the provided array. **`dealerId` in body** follows the same JWT / `ADMIN` rules as POST.
+Update a vehicle process in **one request**. **`dealerId` in body** follows the same JWT / `ADMIN` rules as POST.
 
-> **Full-replace semantics — carry prices forward.** This PATCH is a full replace: `persons` are replaced, and **any omitted `purchasePrice` / `salePrice` is set to `null`**. A client changing only the status must re-send the existing `persons` **and** prices, or they are wiped. The same single-seller/single-buyer and price-requires-counterparty invariants as `start` apply (**422 `4220`**).
+> **`persons` is optional.** Person management (add/edit/delete, and change-buyer) lives in the [`/persons`](#persons) endpoints. **Omit `persons`** for a price-only update and the process's persons are left untouched — including any `CANCELLED` buyers kept for history. When `persons` **is** provided it is a full replace (must be non-empty; the same single-seller/single-buyer invariant as `start` applies — **422 `4220`**). ⚠️ Do **not** re-send `persons` just to change other fields: a `CANCELLED` buyer re-sent alongside the active one trips the one-buyer rule.
+
+> **Prices are carried forward, not persons.** Any omitted `purchasePrice` / `salePrice` is still set to `null`, so a price-only update must re-send the prices to preserve them (prices are independent of persons).
 
 **Auth:** Bearer token required.
 
 **Error codes:** `4050` — vehicle process not found; `4047` — vehicle not found; `4043` — dealer not found; `4034`; `4032`–`4033`, `4226`; `4220` — price/person invariant violation.
+
+---
+
+### PATCH /api/v1/vehicle-processes/:id/agent-status
+
+Move an **agent-created** process into one of the owning agent's kanban columns on the agent board. Updates `agentStatusId` only. Authorized via managed-dealer scope (the process must be on a placeholder the caller manages) and the target status must belong to that placeholder's owner agent.
+
+**Auth:** Bearer token required (agent / super-admin).
+
+**Path:** `id` = `processId`.
+
+**Body:**
+
+```json
+{ "agentStatusId": "uuid" }
+```
+
+**Response (200):** the updated process (`persons[]` included).
+
+**Error codes:** `4050` — process not found; `4034`/`4039`/`4033` — not authorized for the dealer; `4226` — process not linked to a dealer; `4234` — process has no agent board, or the status is not the agent's; `4220` — invalid body.
+
+---
+
+### PATCH /api/v1/vehicle-processes/:id/receipt
+
+The **agent working the process** uploads (or replaces) the **RTO receipt** — a PDF or image the RTO issues for the process. **Agent-only** (the assigned/managing agent, or super-admin); the **dealer can only download** it (it appears as `receipt` in the process details). The file is first uploaded flat via `POST /upload/generate` + `PUT`, then attached here (the server moves it into the process's folder).
+
+**Auth:** Bearer (agent working the process, or super-admin).
+
+**Body:** `{ "imageName": "<flat upload fileKey>" }`
+
+**Response (200):** the updated process.
+
+**Error codes:** `4050` — process not found; `4063` — not the agent working this process; `4220` — invalid body.
+
+---
+
+### DELETE /api/v1/vehicle-processes/:id/receipt
+
+Removes the RTO receipt (the stored file is left on disk). Agent-only (+ super-admin).
+
+**Error codes:** `4050`; `4063`.
+
+---
+
+### PATCH /api/v1/vehicle-processes/:id/tracking
+
+The agent sets (or clears) the **RC-book post/courier tracking number** after dispatch — a single optional text field. Agent-only (+ super-admin); the dealer reads it (as `trackingNumber` in the details) to track the RC book. A blank value clears it.
+
+**Auth:** Bearer (agent working the process, or super-admin).
+
+**Body:** `{ "trackingNumber": "IND123456789" }` (blank/empty clears it)
+
+**Response (200):** the updated process.
+
+**Error codes:** `4050` — process not found; `4063` — not the agent working this process; `4220` — invalid body.
+
+---
+
+### PATCH /api/v1/vehicle-processes/:id/status
+
+Set or clear a process's **fixed lifecycle status** (`SOLD` / `COMPLETE` / `SCRAP`, or `null` = OPEN). The caller must manage the process's dealer (agent-aware scope). Setting a terminal value is always allowed. Sending `null` **reopens** the process and is rejected when **another** OPEN process already exists for the same vehicle under the same dealer (the "at most one open process per vehicle per dealer" invariant).
+
+**Auth:** Bearer token required (dealer owner, managing agent, or super-admin — agent-aware scope).
+
+**Path:** `id` = `processId`.
+
+**Request body:**
+
+| Field    | Type              | Required | Validation                                                       |
+|----------|-------------------|----------|------------------------------------------------------------------|
+| dealerId | string            | No       | Optional for agents/super-admin; must match the process's dealer |
+| status   | string \| null    | Yes      | One of `SOLD` / `COMPLETE` / `SCRAP`, or `null` to reopen (OPEN) |
+
+```json
+{ "status": "SOLD" }
+```
+
+**Response (200):** the updated process (`persons[]` included), reflecting the new `status`.
+
+**Error codes:** `4050` — vehicle process not found; `4034` — wrong dealer; `4039` — agent does not manage this dealer; `4033` — account not linked to a dealer/agent; **`4113`** — cannot reopen: another OPEN process already exists for this vehicle under this dealer; `4220` — invalid body.
+
+---
+
+### PUT /api/v1/vehicle-processes/:id/tags
+
+Full-replace the process's tags (Finder-style labels). The caller must manage the process's dealer; **every** `tagId` must belong to that same dealer. An **empty** `tagIds` clears all tags. The set is applied atomically (delete-all then insert). Duplicate ids in the request are de-duplicated.
+
+**Auth:** Bearer token required (dealer owner, managing agent, or super-admin — agent-aware scope).
+
+**Path:** `id` = `processId`.
+
+**Request body:**
+
+| Field    | Type     | Required | Validation                                             |
+|----------|----------|----------|--------------------------------------------------------|
+| dealerId | string   | No       | Optional for agents/super-admin; must match the process's dealer |
+| tagIds   | string[] | Yes      | Array of tag UUIDs; may be empty to clear all tags     |
+
+**Response (200):** `data` = the process's resulting tags, `[{ tagId, tagName, colour }]` ordered by `tagName`.
+
+**Error codes:** `4050` — vehicle process not found; `4235` — one or more tags do not belong to this dealer; `4034` — wrong dealer; `4039` — agent does not manage this dealer; `4226` — process not linked to a dealer; `4220` — invalid body.
 
 ---
 
@@ -1797,6 +2290,79 @@ Delete a vehicle process by ID (persons are deleted automatically via cascade).
 **Auth:** Bearer token required.
 
 **Error codes:** `4050` — vehicle process not found; `4034`.
+
+---
+
+### GET /api/v1/vehicle-processes/:id/comments
+
+The **shared comment thread** for a process (oldest first). Both the dealer owner and the agent (assigned or managing) read the same thread, so agent comments appear on the dealer's assigned process and vice-versa.
+
+**Auth:** Bearer token required. Authorized for the dealer owner, the managing/assigned agent, or super-admin (see `assertCanAccessProcess`).
+
+**Path:** `id` = `processId`.
+
+**Response (200):** `data` is an array of:
+
+```json
+{
+  "commentId": "uuid",
+  "processId": "uuid",
+  "authorUserId": "uuid | null",
+  "authorName": "Asha Dealer",
+  "authorRole": "DEALER | AGENT | ADMIN",
+  "body": "Please upload the RC scan.",
+  "createdAt": "2026-07-26T12:00:00.000Z",
+  "updatedAt": "2026-07-26T12:00:00.000Z"
+}
+```
+
+**Error codes:** `4050` — process not found; `4034`/`4039`/`4033` — not authorized for this process.
+
+---
+
+### POST /api/v1/vehicle-processes/:id/comments
+
+Post a comment to a process's shared thread. `authorUserId` and `authorRole` are derived from the token (not the body).
+
+**Auth:** Bearer token required (same access rule as the GET above).
+
+**Path:** `id` = `processId`.
+
+**Body:**
+
+```json
+{ "body": "Uploaded — please review." }
+```
+
+**Response (201):** the created comment (same shape as the GET items).
+
+**Error codes:** `4050` — process not found; `4034`/`4039`/`4033` — not authorized; `4220` — empty/too-long body.
+
+---
+
+### PATCH /api/v1/vehicle-processes/:id/comments/:commentId
+
+Edit a comment's body. **Author-only** — you may edit only your own comment (editing another's content would misrepresent authorship). `updatedAt` advances; clients show "(edited)" when it is meaningfully later than `createdAt`.
+
+**Auth:** Bearer token required (same process access rule as the thread GET).
+
+**Body:** `{ "body": "Updated text." }`
+
+**Response (200):** the updated comment.
+
+**Error codes:** `4050` — process not found; `4040` — comment not found (or not on this process); `4034`/`4039`/`4033` — no process access; `4062` — not the author; `4220` — empty/too-long body.
+
+---
+
+### DELETE /api/v1/vehicle-processes/:id/comments/:commentId
+
+Delete a comment. The **author** may delete their own; a **super-admin** may delete any (moderation).
+
+**Auth:** Bearer token required (same process access rule as the thread GET).
+
+**Response (200):** `data: {}`.
+
+**Error codes:** `4050` — process not found; `4040` — comment not found (or not on this process); `4034`/`4039`/`4033` — no process access; `4062` — not the author and not super-admin.
 
 ---
 
@@ -1817,19 +2383,35 @@ Buyer/seller rows linked to a **vehicle process** (`processId`). All routes are 
 
 ---
 
+> **One active buyer.** A process may have only ONE `ACTIVE` buyer. Adding a second buyer returns `4064` — replace the buyer via `POST /persons/change-buyer` instead, which CANCELs the current buyer (kept for history) and adds the new one. Dealers and managing agents can both do this.
+
 ### POST /api/v1/persons
 
-**Body:** `processId` (UUID), `personName`, `mobileNumber`, `personType`, optional `address` (string or `null`). Optional **`dealerId`** in body for **`ADMIN`** only.
+**Body:** `processId` (UUID), `personName`, `mobileNumber`, `personType`, optional `address` (string or `null`), optional **`idImageName`** (the flat upload `fileKey` of the person's ID photo). Optional **`dealerId`** in body (agent passes a managed dealer; **`ADMIN`** any).
 
-**Error codes:** `4050` — vehicle process not found; `4034` — process not in your dealer; `4032`–`4033`, `4226` — dealer scope.
+When `idImageName` is provided it is relocated into the process folder and stored as a `ProcessUploadPhoto` linked to the new person (category `'Buyer ID'` / `'Seller ID'`), so it appears in the process's Documents while the person is active.
+
+**Error codes:** `4050` — vehicle process not found; `4034` — process not in your dealer; `4064` — an active buyer already exists (use change-buyer); `4008` — invalid file key; `4032`–`4033`, `4226`/`4039` — dealer/agent scope.
+
+---
+
+### POST /api/v1/persons/change-buyer
+
+Replaces the process's active buyer: the current `ACTIVE` buyer is set to `CANCELLED` (kept for history, with their ID photo linked to them), and a new `ACTIVE` buyer is created. Optionally attaches the new buyer's ID photo (uploaded flat first, then relocated into the process folder and linked to the new buyer). Atomic.
+
+**Body:** `processId` (UUID), `personName`, `mobileNumber`, optional `address`, optional `buyerIdImageName` (the flat upload `fileKey`). Optional **`dealerId`** (agent managed / ADMIN).
+
+**Response (201):** the new buyer.
+
+**Error codes:** `4050` — process not found; `4034`/`4039`/`4032`–`4033`/`4226` — scope; `4220` — invalid body.
 
 ---
 
 ### GET /api/v1/persons?processId=
 
-**Query:** `processId` (UUID, required). Optional **`dealerId`** for **`ADMIN`**.
+**Query:** `processId` (UUID, required). Optional **`dealerId`** for agent/ADMIN.
 
-**Response:** `data` is an array of persons, ordered by `createdAt` ascending.
+**Response:** `data` is an array of persons ordered by `createdAt`, each `{ personId, personName, address, mobileNumber, personType, status ('ACTIVE'|'CANCELLED'), idPhotos: [{ processUploadPhotoId, category, imageName, photoUrl }] }`. `idPhotos` are the ID-proof docs linked to that person (used to show a cancelled buyer's ID under them).
 
 **Error codes:** `4050`, `4034`, `4032`–`4033`, `4226`.
 
@@ -1845,9 +2427,11 @@ Buyer/seller rows linked to a **vehicle process** (`processId`). All routes are 
 
 ### PATCH /api/v1/persons/:id
 
-**Body:** `personName`, `mobileNumber`, `personType`, optional `address`. Optional query **`dealerId`** for **`ADMIN`**.
+**Body:** `personName`, `mobileNumber`, `personType`, optional `address`, optional **`idImageName`** (the flat upload `fileKey` of a new ID photo). Optional query **`dealerId`** for **`ADMIN`**.
 
-**Error codes:** `4055`, `4034`, `4032`–`4033`, `4226`.
+When `idImageName` is provided it **replaces** the person's linked ID photo(s) (relocated into the process folder, stored as a `ProcessUploadPhoto` linked to the person).
+
+**Error codes:** `4055`, `4034`, `4008` — invalid file key; `4032`–`4033`, `4226`.
 
 ---
 
@@ -1986,13 +2570,18 @@ Tasks tied to a **vehicle process**. **Dealer scope** matches other process reso
 | `task_date` | `taskDate` (ISO timestamp) |
 | `assign_user_id` | `assignUserId` (nullable UUID) |
 | `status` | `status` (string, max 50; defaults to `To-Do`) |
+| `completed_at` | `completedAt` (nullable ISO timestamp) — server-managed |
 | `created_at` / `updated_at` | `createdAt` / `updatedAt` |
+
+**`completedAt` (server-managed):** On every **create** and **update**, after the new `status` is resolved, the server checks whether that status is a **done** column for the task's dealer (a `DealerTaskStatus` with matching `statusName` and `isDone: true`). If it **is** a done status, `completedAt` is stamped `now()` the first time the task enters done and preserved on later edits while it stays done; if it is **not** a done status, `completedAt` is cleared to `null`. A dealer with no done column configured (e.g. a managed placeholder dealer) never stamps `completedAt`.
 
 ---
 
 ### POST /api/v1/process-tasks
 
 **Body:** `processId`, `taskName`, `taskDate` (ISO string), optional `assignUserId` (UUID or `null`), optional `status` (string, max 50; defaults to `To-Do` — e.g. `To-Do` / `In Progress` / `Done`). Optional **`dealerId`** for **`ADMIN`**.
+
+`completedAt` is set automatically when the initial `status` is a done column for the dealer (see above).
 
 **Error codes:** `4050`, `4034`, `4045` — assignee user not found; `4032`–`4033`, `4226`; `4229` — invalid `taskDate`.
 
@@ -2003,6 +2592,66 @@ Tasks tied to a **vehicle process**. **Dealer scope** matches other process reso
 **Query:** `processId` (required). Optional **`dealerId`** for **`ADMIN`**.
 
 **Response:** `data` is an array ordered by `taskDate`, then `createdAt`.
+
+---
+
+### GET /api/v1/process-tasks/board
+
+Dealer-wide **task board** (Jira-like) across all of the dealer's vehicle processes. Returns open tasks plus tasks completed within the **last 15 days** (tasks whose `completedAt` is older than 15 days are excluded).
+
+**Query (all optional):**
+- `dealerId` — target dealer for **`ADMIN`** / a managing **agent** (managed-dealer scope).
+- `assignUserId` (UUID) — filter to one assignee.
+- `mine` (boolean, `true`/`false`) — when `true`, filter to the caller (`assignUserId` = the caller's user id); overrides `assignUserId`.
+- `status` (string) — filter to one task-board column.
+
+**Response:** `data` is an array ordered by `createdAt` **descending** (last-created task first); each item:
+
+| Field | Notes |
+|-------|-------|
+| `processTaskId` | task UUID |
+| `taskName` | |
+| `taskDate` | ISO timestamp |
+| `status` | task-board column |
+| `completedAt` | ISO timestamp or `null` |
+| `assignUserId` | UUID or `null` |
+| `assignUserName` | assignee's name or `null` |
+| `processId` | parent vehicle process UUID |
+| `vehicleRegistrationNumber` | registration of the process's vehicle or `null` |
+| `tags` | the process's tags, `[{ tagId, tagName, colour }]` ordered by `tagName` (`[]` when none) |
+
+**Error codes:** `4032`–`4033`, `4226`, `4039`.
+
+---
+
+### GET /api/v1/process-tasks/history
+
+Dealer-wide **completed-task history** across all of the dealer's vehicle processes — **all-time** (not the 15-day board window), **paginated**, newest completion first. Only tasks with a non-null `completedAt` are returned.
+
+**Query (all optional):**
+- `dealerId` — target dealer for **`ADMIN`** / a managing **agent** (managed-dealer scope).
+- `assignUserId` (UUID) — filter to one assignee.
+- `mine` (boolean, `true`/`false`) — when `true`, filter to the caller (`assignUserId` = the caller's user id); overrides `assignUserId`.
+- `page`, `limit` — pagination (`page` ≥ 1, `limit` 1–100, default 10).
+
+**Employee scoping:** a non-owner dealer user without the `tasks.viewAll` capability is forced to `mine=true` (sees only their own completed tasks), regardless of the client-sent `mine`. Owner, agent, and super-admin callers are unaffected.
+
+**Response (200, paginated):** `data.data` is an array ordered by `completedAt` DESC, with `data.meta` = `{ total, page, limit, totalPages }`. Each item uses the board card shape:
+
+| Field | Notes |
+|-------|-------|
+| `processTaskId` | task UUID |
+| `taskName` | |
+| `taskDate` | ISO timestamp |
+| `status` | task-board column |
+| `completedAt` | ISO timestamp (never `null` here) |
+| `assignUserId` | UUID or `null` |
+| `assignUserName` | assignee's name or `null` |
+| `processId` | parent vehicle process UUID |
+| `vehicleRegistrationNumber` | registration of the process's vehicle or `null` |
+| `tags` | the process's tags, `[{ tagId, tagName, colour }]` ordered by `tagName` (`[]` when none) |
+
+**Error codes:** `4032`–`4033`, `4226`, `4039`.
 
 ---
 
@@ -2018,6 +2667,8 @@ Tasks tied to a **vehicle process**. **Dealer scope** matches other process reso
 
 **Body:** `taskName`, `taskDate`, optional `assignUserId` (UUID or `null` to clear), optional `status` (string, max 50). Optional **`dealerId`** query for **`ADMIN`**.
 
+`completedAt` is recomputed from the new `status`: stamped (kept if already set) when moving into a done column, cleared to `null` otherwise (see above).
+
 **Error codes:** `4057`, `4034`, `4045`, `4229`, `4032`–`4033`, `4226`.
 
 ---
@@ -2027,6 +2678,85 @@ Tasks tied to a **vehicle process**. **Dealer scope** matches other process reso
 Optional **`dealerId`** query for **`ADMIN`**.
 
 **Error codes:** `4057`, `4034`, `4032`–`4033`, `4226`.
+
+---
+
+### GET /api/v1/process-tasks/:id/comments
+
+The **shared comment thread** for a task (oldest first) — the per-task equivalent of the process comment thread. The dealer's team (owner + employees) and the managing agent read and post to the same thread.
+
+**Auth:** Bearer token required. Access is resolved via the **managed-dealer** scope on the task's process: the task's `process.dealerId` must match the resolved dealer (`getProcessTaskById`).
+
+**Path:** `id` = `processTaskId`.
+
+**Query:** optional **`dealerId`** — target dealer for **`ADMIN`** / a managing **agent** (managed-dealer scope).
+
+**Response (200):** `data` is an array of:
+
+```json
+{
+  "commentId": "uuid",
+  "processTaskId": "uuid",
+  "authorUserId": "uuid | null",
+  "authorName": "Asha Dealer",
+  "authorRole": "DEALER | AGENT | ADMIN",
+  "body": "Waiting on the RC scan.",
+  "createdAt": "2026-07-26T12:00:00.000Z",
+  "updatedAt": "2026-07-26T12:00:00.000Z"
+}
+```
+
+**Error codes:** `4057` — task not found; `4034`/`4039`/`4033`/`4032` — not authorized for this task; `4226` — missing `dealerId` (agent / super-admin).
+
+---
+
+### POST /api/v1/process-tasks/:id/comments
+
+Post a comment to a task's shared thread. `authorUserId` and `authorRole` are derived from the token (not the body).
+
+**Auth:** Bearer token required (same access rule as the GET above).
+
+**Path:** `id` = `processTaskId`. **Query:** optional **`dealerId`**.
+
+**Body:**
+
+```json
+{ "body": "Uploaded — please review." }
+```
+
+**Response (201):** the created comment (same shape as the GET items).
+
+**Error codes:** `4057` — task not found; `4034`/`4039`/`4033`/`4032` — not authorized; `4226`; `4220` — empty/too-long body.
+
+---
+
+### PATCH /api/v1/process-tasks/:id/comments/:commentId
+
+Edit a comment's body. **Author-only** — you may edit only your own comment. `updatedAt` advances; clients show "(edited)" when it is meaningfully later than `createdAt`.
+
+**Auth:** Bearer token required (same task access rule as the thread GET).
+
+**Path:** `id` = `processTaskId`, `commentId` = comment UUID. **Query:** optional **`dealerId`**.
+
+**Body:** `{ "body": "Updated text." }`
+
+**Response (200):** the updated comment.
+
+**Error codes:** `4057` — task not found; `4040` — comment not found (or not on this task); `4034`/`4039`/`4033`/`4032` — no task access; `4062` — not the author; `4226`; `4220` — empty/too-long body.
+
+---
+
+### DELETE /api/v1/process-tasks/:id/comments/:commentId
+
+Delete a comment. The **author** may delete their own; a **super-admin** may delete any (moderation).
+
+**Auth:** Bearer token required (same task access rule as the thread GET).
+
+**Path:** `id` = `processTaskId`, `commentId` = comment UUID. **Query:** optional **`dealerId`**.
+
+**Response (200):** `data: {}`.
+
+**Error codes:** `4057` — task not found; `4040` — comment not found (or not on this task); `4034`/`4039`/`4033`/`4032` — no task access; `4062` — not the author and not super-admin; `4226`.
 
 ---
 
@@ -2113,7 +2843,7 @@ Full update; **body** same shape as POST (all fields required).
 
 ## RBAC navigation (modules, pages, actions)
 
-Sync endpoints follow the same pattern as **Dealer Statuses**: send the full list for a scope; rows with an id are updated, rows without id are created, and **rows missing from the payload are deleted** (cascades to children / permissions). **`sortOrder` is not sent by the client** — it is set from the **array index** (0-based) on each sync.
+Sync endpoints follow the same pattern as **Dealer Task Statuses**: send the full list for a scope; rows with an id are updated, rows without id are created, and **rows missing from the payload are deleted** (cascades to children / permissions). **`sortOrder` is not sent by the client** — it is set from the **array index** (0-based) on each sync.
 
 **Auth:** Bearer token required for all endpoints in this section.
 
@@ -2248,11 +2978,13 @@ CRUD for agents. `firmName`, `agentName`, and `displayName` are **required**; co
 
 ---
 
+> **Super-admin only.** Agent **management** routes — `POST /agents`, `POST /agents/with-user`, `PATCH /agents/:id`, `DELETE /agents/:id` — require a super-admin token (`4038` otherwise). An **agent edits their own profile via `/agents/me`** (above); a **dealer** manages agent relationships via `/dealer-agents/*`.
+
 ### POST /api/v1/agents
 
-Create a new agent.
+Create a new agent. **Super-admin only** (`4038`).
 
-**Auth:** Bearer token required.
+**Auth:** Bearer token required (super-admin).
 
 **Request body:**
 
@@ -2325,6 +3057,28 @@ List agents (paginated).
 
 ---
 
+### GET /api/v1/agents/me
+
+Returns the **caller agent's own** profile, resolved from the token (no path id). For an agent to view their own record in Settings → Profile.
+
+**Auth:** Bearer token required (must be an agent).
+
+**Error codes:** `4035` — the token is not linked to an agent; `4044` — agent not found.
+
+---
+
+### PATCH /api/v1/agents/me
+
+The agent edits **their own** profile. Same body fields as create **except `isSubscribe`**, which is never accepted here and is preserved server-side (only a super-admin may change it via the subscription route). Uniqueness for `emailId` / `mobileNo` / `whatsappNo` is enforced against other agents.
+
+**Auth:** Bearer token required (must be an agent).
+
+**Body:** `{ firmName, agentName, displayName, address?, city?, state?, pincode?, mobileNo?, emailId?, whatsappNo? }`
+
+**Error codes:** `4035` — not linked to an agent; `4044` — agent not found; `4094`/`4095`/`4096` — email / WhatsApp / mobile already registered to another agent; `4220` — invalid body.
+
+---
+
 ### GET /api/v1/agents/:id
 
 Get a single agent by ID.
@@ -2339,23 +3093,37 @@ Get a single agent by ID.
 
 ### PATCH /api/v1/agents/:id
 
-Update an existing agent. Same body fields as create, but **`isSubscribe` is required**. Uniqueness for `emailId` / `mobileNo` / `whatsappNo` is enforced against other agents.
+Update an existing agent. **Super-admin only** (`4038`) — an agent edits their own via `PATCH /agents/me`. Same body fields as create, but **`isSubscribe` is required**. Uniqueness for `emailId` / `mobileNo` / `whatsappNo` is enforced against other agents.
 
-**Auth:** Bearer token required.
+**Auth:** Bearer token required (super-admin).
 
-**Error codes:** `4044` — agent not found; `4094` — email already registered; `4095` — WhatsApp number already registered; `4096` — mobile number already registered.
+**Error codes:** `4038` — not a super-admin; `4044` — agent not found; `4094` — email already registered; `4095` — WhatsApp number already registered; `4096` — mobile number already registered.
+
+---
+
+### PATCH /api/v1/agents/:id/subscription
+
+**Super-admin only.** Toggle an agent's subscription (`isSubscribe`). A subscribed agent can independently manage their own placeholder dealers' vehicle/RTO data + ledger (see the managed-dealer scope under **Vehicle Processes**).
+
+**Auth:** Bearer token required; super-admin (`4038` otherwise). **Path params:** `id` = `agentId`. **Request body:** `isSubscribe` (boolean, required).
+
+```json
+{ "isSubscribe": true }
+```
+
+**Response (200):** `data` is `{ id, isSubscribe }`. **Error codes:** `4038` — not a super-admin; `4044` — agent not found.
 
 ---
 
 ### DELETE /api/v1/agents/:id
 
-Delete an agent by ID.
+Delete an agent by ID. **Super-admin only** (`4038`).
 
-**Auth:** Bearer token required.
+**Auth:** Bearer token required (super-admin).
 
 **Response (200):** `data` is `{}`.
 
-**Error codes:** `4044` — agent not found.
+**Error codes:** `4038` — not a super-admin; `4044` — agent not found.
 
 ---
 
@@ -2435,7 +3203,7 @@ Create a **brand-new verified user** and link them to the agent in one call (so 
 
 ## Agent Statuses
 
-Per-agent kanban statuses for RTO work (mirror **Dealer Statuses**). **`statusName` is unique per agent.** **`statusRank` is per agent** and is determined by the order of the `statusData` array in the sync API (1, 2, 3, …). **Agent-scoped** — the agent is resolved from the JWT (or explicit `agentId` for `ADMIN`).
+Per-agent kanban statuses for RTO work (mirror **Dealer Task Statuses**). **`statusName` is unique per agent.** **`statusRank` is per agent** and is determined by the order of the `statusData` array in the sync API (1, 2, 3, …). **Agent-scoped** — the agent is resolved from the JWT (or explicit `agentId` for `ADMIN`).
 
 **Auth:** Bearer JWT required.
 
@@ -2452,7 +3220,7 @@ Per-agent kanban statuses for RTO work (mirror **Dealer Statuses**). **`statusNa
 
 ### POST /api/v1/agent-statuses
 
-Sync all statuses for an agent in a single request. This endpoint **creates, updates, deletes, and reorders** statuses for the agent (same semantics as dealer status sync).
+Sync all statuses for an agent in a single request. This endpoint **creates, updates, deletes, and reorders** statuses for the agent (same semantics as dealer task status sync).
 
 **Auth:** Bearer token required.
 
@@ -2525,9 +3293,33 @@ Get all statuses for an agent, ordered by `statusRank`. For non-`ADMIN`, **`:age
 
 ---
 
+## Agent-wise upload categories
+
+The **agent** equivalent of **Dealer-wise upload categories**: an agent's own selection of which document categories their create-process wizard collects (mirrors `dealer-wise-upload-categories`, agent-scoped). Links a global `UploadCategory` to the agent with per-link flags + order. **Process photos still store the category NAME string** (`ProcessUploadPhoto.category`) — these links only drive the wizard checklist and optional `processApi` extraction.
+
+**Model (`AgentWiseUploadCategory`, table `agent_wise_upload_category`):** `awucId` (PK), `agentId`, `uploadCategoryId`, `processApi?`, `orderRank`, `isRequired`, `isProcess`, `isViewInStep`, timestamps; `@@unique([agentId, uploadCategoryId])`.
+
+**Auth:** Bearer JWT required. **Agent-scoped** — the agent is resolved from the JWT (or explicit `agentId` for `ADMIN`).
+
+Endpoints (identical shapes to the dealer-wise slice, with `awucId`/`agentId` in place of `dwucId`/`dealerId`; `/order` and `/view-in-step` are declared before `/:id`):
+
+| Method / path | Purpose |
+|---|---|
+| `POST /api/v1/agent-wise-upload-categories` | Link a global category to the agent. Body `{ agentId?, uploadCategoryId, processApi?, isRequired, isProcess, isViewInStep }`; `orderRank` auto = max+1. Duplicate `(agentId, uploadCategoryId)` → `4098`. |
+| `GET /api/v1/agent-wise-upload-categories?agentId=` | Full list → `{ agentId, uploadCategory: [{ awucId, categoryId, categoryName, orderRank, isRequired, processApi, isProcess, isViewInStep }] }`. |
+| `GET /api/v1/agent-wise-upload-categories/view-in-step?agentId=` | Only `isViewInStep=true` (wizard checklist); entries also include master `bothSide`. |
+| `PUT /api/v1/agent-wise-upload-categories/order` | Body `{ agentId?, items: [{ awucId, orderRank }] }`; every `awucId` must belong to the agent (`4225`). |
+| `GET /api/v1/agent-wise-upload-categories/:id` · `PATCH /:id` · `DELETE /:id` | Get / full-replace update / delete by `awucId`. |
+
+**Error codes:** `4044` — agent not found; `4052` — link not found; `4098` — category already linked to this agent; `4225` — a link in `/order` doesn't belong to the agent; `4035`–`4037`, `4226` — agent scope.
+
+---
+
 ## Dealer–Agent Grants
 
 A **dealer** granting agent-site access to an **agent** (`dealer_agent`, unique per `(dealerId, agentId)`). **Dealer-scoped** — the dealer is resolved from the JWT (or explicit `dealerId` for `ADMIN`). Grants carry a `status` (`ACTIVE` / `REVOKED`) and a `source` (`DEALER_GRANT` / `CONNECT`). Only **ACTIVE `DEALER_GRANT`** rows count against the dealer's `maxAgents` cap; `CONNECT` grants (created by placeholder→real connection) are excluded.
+
+The cap is **enforced**: any action that newly consumes a slot (a fresh grant, an invitation acceptance, a switch's replacement grant) fails with **`4231`** when `used >= maxAgents`. `capInfo` carries `hasFreeSlot` (`used < maxAgents`) to drive the UI. A super-admin raises a dealer's cap via [`PATCH /api/v1/dealers/:id/agent-slots`](#patch-apiv1dealersidagent-slots) (the reusable "raise slots" seam a future self-serve addon reuses).
 
 **Auth:** Bearer JWT required.
 
@@ -2543,7 +3335,7 @@ A **dealer** granting agent-site access to an **agent** (`dealer_agent`, unique 
 
 ### POST /api/v1/dealer-agents
 
-Grant agent-site access to an agent for the calling dealer. Upserts an **ACTIVE `DEALER_GRANT`** (re-activating a previously revoked row). Granting is **not blocked** when over the cap — `capInfo.overCap` only surfaces the condition for the UI.
+Grant agent-site access to an agent for the calling dealer. Upserts an **ACTIVE `DEALER_GRANT`** (re-activating a previously revoked row). The cap is **enforced** (`4231`) when the grant would newly consume a slot; re-granting an agent that is already an ACTIVE `DEALER_GRANT` is idempotent and never blocked.
 
 **Auth:** Bearer token required.
 
@@ -2569,12 +3361,109 @@ Grant agent-site access to an agent for the calling dealer. Upserts an **ACTIVE 
       "createdAt": "2026-06-28T10:00:00.000Z",
       "updatedAt": "2026-06-28T10:00:00.000Z"
     },
-    "capInfo": { "maxAgents": 2, "used": 1, "overCap": false }
+    "capInfo": { "maxAgents": 2, "used": 1, "overCap": false, "hasFreeSlot": true }
   }
 }
 ```
 
-**Error codes:** `4044` — agent not found; `4032`–`4033`, `4226` — dealer scope.
+**Error codes:** `4044` — agent not found; `4231` — agent cap reached (no free slot); `4032`–`4033`, `4226` — dealer scope.
+
+---
+
+### GET /api/v1/dealer-agents/search
+
+Search agents the calling dealer could grant (partial, case-insensitive match on email / mobile / whatsapp / agentName / firmName / displayName), **excluding** agents already an ACTIVE grant of the caller. Backs the dealer's "Add agent" search box.
+
+**Auth:** Bearer token required.
+
+**Query params:** `q` (string, **min 2 chars**, required).
+
+**Response (200):** `data` is an array of compact agent summaries (`agentId`, `firmName`, `agentName`, `displayName`, `mobileNo`, `emailId`), capped at 10, newest first.
+
+```json
+{
+  "statusCode": 200,
+  "message": "Agent search results",
+  "data": [
+    { "agentId": "uuid", "firmName": "Speedy RTO Services", "agentName": "Ramesh Agent", "displayName": "Speedy RTO", "mobileNo": "9876500000", "emailId": "agent@example.com" }
+  ]
+}
+```
+
+**Error codes:** `4220` — `q` shorter than 2 chars; `4032`–`4033`, `4226` — dealer scope.
+
+---
+
+### GET /api/v1/dealer-agents/switch-preview
+
+Preview what a switch off an agent would touch: the agent's **OPEN** assignments (which will be auto-completed) and the current khata **balance** (which can be settled or kept). See [`POST /switch`](#post-apiv1dealer-agentsswitch).
+
+**Auth:** Bearer token required.
+
+**Query params:** `oldAgentId` (UUID, required) — must be a current ACTIVE grant of the caller.
+
+**Response (200):**
+
+```json
+{
+  "statusCode": 200,
+  "message": "Switch preview",
+  "data": {
+    "agentId": "uuid-old-agent",
+    "openAssignmentCount": 1,
+    "openAssignments": [
+      {
+        "assignmentId": "uuid",
+        "status": "OPEN",
+        "service": { "serviceId": "uuid", "serviceName": "Name Transfer", "shortName": "NT" },
+        "process": { "processId": "uuid", "vehicle": { "registrationNumber": "MH12AB1234" } }
+      }
+    ],
+    "balance": "5900",
+    "hasBalance": true
+  }
+}
+```
+
+`balance` is a dealer-perspective Decimal string (positive = dealer owes the agent).
+
+**Error codes:** `4040` — the agent is not an active grant of the dealer; `4032`–`4033`, `4226` — dealer scope.
+
+---
+
+### POST /api/v1/dealer-agents/switch
+
+Atomically switch the dealer **off** an agent (optionally **onto** a replacement) in one transaction: **(1)** if `settleDecision = SETTLE` and the balance ≠ 0, post a balancing `"Settlement on agent switch"` ledger entry (history preserved — nothing deleted); **(2)** mark every OPEN assignment for the pair `COMPLETED`; **(3)** revoke the old grant; **(4)** if `newAgentId` is given, grant it — after the revoke, so the freed slot counts against the cap. The plain `DELETE /:id` remains for a raw revoke; this is the guided flow.
+
+**Auth:** Bearer token required.
+
+**Request body:**
+
+- `oldAgentId` (UUID, required) — the current ACTIVE-granted agent.
+- `newAgentId` (UUID, optional) — replacement agent; omit to just deactivate. Must differ from `oldAgentId`.
+- `settleDecision` — `SETTLE` | `KEEP` (required). `KEEP` leaves the balance on the ledger.
+- `settleAmount` (number > 0, optional) — caps a **partial** settlement; blank settles the full balance.
+
+```json
+{ "oldAgentId": "uuid-old", "newAgentId": "uuid-new", "settleDecision": "SETTLE" }
+```
+
+**Response (200):** `data` is `{ oldGrant, newGrant, completedCount, settledEntry }` — `oldGrant` (now `REVOKED`), `newGrant` (the new ACTIVE grant or `null`), `completedCount` (assignments completed), and `settledEntry` (a flattened `{ ledgerEntryId, direction, amount, balanceAfter, description }` or `null`).
+
+```json
+{
+  "statusCode": 200,
+  "message": "Agent switched",
+  "data": {
+    "oldGrant": { "dealerAgentId": "uuid", "status": "REVOKED", "source": "DEALER_GRANT" },
+    "newGrant": { "dealerAgentId": "uuid", "status": "ACTIVE", "source": "DEALER_GRANT" },
+    "completedCount": 1,
+    "settledEntry": { "ledgerEntryId": "uuid", "direction": "DEBIT", "amount": 5900, "balanceAfter": 0, "description": "Settlement on agent switch" }
+  }
+}
+```
+
+**Error codes:** `4000` — replacement equals the old agent; `4040` — old grant not ACTIVE; `4044` — replacement agent not found; `4233` — replacement is already an ACTIVE grant; `4231` — cap reached after the switch; `4032`–`4033`, `4226` — dealer scope.
 
 ---
 
@@ -2610,7 +3499,7 @@ List the calling dealer's **ACTIVE** grants (newest first), each with a compact 
         }
       }
     ],
-    "capInfo": { "maxAgents": 2, "used": 1, "overCap": false }
+    "capInfo": { "maxAgents": 2, "used": 1, "overCap": false, "hasFreeSlot": true }
   }
 }
 ```
@@ -2630,6 +3519,129 @@ Revoke a grant (sets `status = REVOKED`). The grant must belong to the calling d
 **Response (200):** `data` is the updated (revoked) grant row.
 
 **Error codes:** `4040` — grant not found; `4034` — grant belongs to another dealer; `4032`–`4033`, `4226` — dealer scope.
+
+---
+
+## Agent Invitations
+
+A **dealer** invites a **brand-new agent** by email. A single-use onboarding link is emailed (its random token stored **hashed**, like `EmailOtp`); the agent opens the link, fills out their profile, and — on submit — an agent account + verified login is created and (cap permitting) auto-granted to the inviting dealer, logging the new agent straight in. The `AgentInvitation` row is retained (listable / resendable / cancellable) and its `status` tracks the lifecycle.
+
+The **management** endpoints (create/list/resend/cancel) require a dealer JWT; the **accept** endpoints under `/accept/:token` are **public** (no auth) and back the onboarding page.
+
+### Model (Prisma `AgentInvitation`, table `agent_invitation`)
+
+- `invitationId` (UUID, PK; column `invitation_id`)
+- `dealerId` (FK) · `agentName` · `emailId` · `mobileNo?`
+- `tokenHash` (sha256 hex of the link token — the raw token is never stored/returned except the dev `inviteLink`)
+- `status` — `PENDING` | `ACCEPTED` | `EXPIRED` | `CANCELLED` (default `PENDING`)
+- `expiresAt` (7 days from issue) · `acceptedAt?` · `createdByUserId?`
+- `createdAt`, `updatedAt`
+
+---
+
+### POST /api/v1/agent-invitations
+
+Invite a new agent by email. Enforces the dealer's agent cap (`4231`); rejects an email/mobile that already belongs to an agent (`4112` — steer to search + grant) or another account (`4091`). Creates a PENDING row and emails the onboarding link `${FRONTEND_URL}/agent-onboarding/<token>`.
+
+**Auth:** Bearer token required (dealer scope).
+
+**Request body:** `agentName` (string, required), `emailId` (email, required), `mobileNo` (string, optional).
+
+**Response (201):** `data` is the created invitation (without `tokenHash`). In **non-production** the response also includes `inviteLink` (the full onboarding URL) to ease testing.
+
+```json
+{
+  "statusCode": 201,
+  "message": "Invitation sent",
+  "data": {
+    "invitationId": "uuid",
+    "dealerId": "uuid",
+    "agentName": "Ramesh Kumar",
+    "emailId": "ramesh@example.com",
+    "mobileNo": "9876500000",
+    "status": "PENDING",
+    "expiresAt": "2026-07-25T10:00:00.000Z",
+    "acceptedAt": null,
+    "createdByUserId": "uuid",
+    "createdAt": "2026-07-18T10:00:00.000Z",
+    "updatedAt": "2026-07-18T10:00:00.000Z",
+    "inviteLink": "http://localhost:5173/agent-onboarding/<token>"
+  }
+}
+```
+
+**Error codes:** `4231` — agent cap reached; `4112` — email/mobile already an agent (grant instead); `4091` — email already an account; `4043` — dealer not found; `4032`–`4033`, `4226` — dealer scope.
+
+---
+
+### GET /api/v1/agent-invitations
+
+List the calling dealer's **PENDING** invitations (newest first). `data` is an array of invitations (without `tokenHash`).
+
+**Auth:** Bearer token required (dealer scope).
+
+---
+
+### POST /api/v1/agent-invitations/:id/resend
+
+Regenerate the token + expiry of a PENDING invitation and re-send the email. `data` is the updated invitation (with the dev `inviteLink` in non-production).
+
+**Auth:** Bearer token required (dealer scope).
+
+**Error codes:** `4061` — invitation not found; `4034` — belongs to another dealer; `4110` — no longer pending; `4043` — dealer not found.
+
+---
+
+### DELETE /api/v1/agent-invitations/:id
+
+Cancel a PENDING invitation (soft — the row is retained as `CANCELLED`). `data` is the updated invitation.
+
+**Auth:** Bearer token required (dealer scope).
+
+**Error codes:** `4061` — invitation not found; `4034` — belongs to another dealer; `4110` — no longer pending.
+
+---
+
+### GET /api/v1/agent-invitations/accept/:token  (public)
+
+Validate an invitation token and return the onboarding **prefill**. An expired-but-still-pending invitation is auto-marked `EXPIRED`. **No auth.**
+
+**Response (200):**
+
+```json
+{
+  "statusCode": 200,
+  "message": "Invitation valid",
+  "data": { "agentName": "Ramesh Kumar", "emailId": "ramesh@example.com", "mobileNo": "9876500000", "dealerName": "Demo Motors" }
+}
+```
+
+**Error codes:** `4061` — unknown token; `4110` — already used/cancelled; `4111` — expired.
+
+---
+
+### POST /api/v1/agent-invitations/accept/:token  (public)
+
+Complete onboarding: atomically create the agent (+ seeded kanban statuses), a **verified** login user, and the agent↔user link; grant the agent to the inviting dealer **if a cap slot is free** (else the account is created but ungranted — `granted: false`, dealer activates later); mark the invitation `ACCEPTED`; and return a login bundle so the new agent is signed straight in. The invited **email is taken from the invitation** server-side (never from the body). **No auth.**
+
+**Request body:** `firmName`, `agentName`, `displayName`, `mobileNo`, `password` (min 8) — all required; `address`, `city`, `state`, `pincode`, `whatsappNo` optional.
+
+**Response (201):** `data` is `{ token, refreshToken, granted, user }` (`user` carries `agentId`, `dealerId: null`, `isSuperAdmin: false` → resolves to the `agent` role).
+
+```json
+{
+  "statusCode": 201,
+  "message": "Welcome aboard",
+  "data": {
+    "token": "jwt-access",
+    "refreshToken": "jwt-refresh",
+    "granted": true,
+    "user": { "userId": "uuid", "emailId": "ramesh@example.com", "userName": "Ramesh Kumar", "emailVerified": true, "dealerId": null, "agentId": "uuid", "isSuperAdmin": false }
+  }
+}
+```
+
+**Error codes:** `4061` — unknown token; `4110` — already used/cancelled; `4111` — expired; `4091` — email already an account (race with another signup).
 
 ---
 
@@ -2653,31 +3665,41 @@ A **dealer** assigns a **vehicle process + chosen RTO service** to a granted **a
 
 ### POST /api/v1/process-assignments
 
-Assign a vehicle process + RTO service to a granted agent. **Dealer-scoped.** The process must belong to the dealer, the dealer must hold a live (`ACTIVE`) grant for the agent, and the service must exist. The new assignment's kanban column defaults to the agent's lowest-ranked status (or `null`). `assignedByUserId` is taken from the authenticated user.
+Assign a vehicle process + **one or more** RTO services to a granted agent — **one assignment row is created per service**, all in one transaction. **Dealer-scoped.** The process must belong to the dealer, the dealer must hold a live (`ACTIVE`) grant for the agent, and every requested service must exist. Each new assignment's kanban column defaults to the agent's lowest-ranked status (or `null`). `assignedByUserId` is taken from the authenticated user.
 
 **Auth:** Bearer token required.
 
 **Request body:**
 
-| Field     | Type   | Required | Validation |
-|-----------|--------|----------|------------|
-| processId | string | Yes      | UUID (vehicle process owned by the dealer) |
-| agentId   | string | Yes      | UUID (a granted agent) |
-| serviceId | string | Yes      | UUID (RTO service) |
-| note      | string | No       | Max 2000 |
+| Field      | Type     | Required | Validation |
+|------------|----------|----------|------------|
+| processId  | string   | Yes      | UUID (vehicle process owned by the dealer) |
+| agentId    | string   | Yes      | UUID (a granted agent) |
+| serviceIds | string[] | Yes      | 1–50 unique UUIDs (RTO services) |
+| note       | string   | No       | Max 2000 (instructions for the agent) |
+| cost       | number   | No       | Positive, ≤2 decimals, ≤ `Decimal(14,2)` — money owed to the agent, applied **per service** |
+| costDate   | string   | No       | ISO date — the ledger entry's book date (defaults to now) |
+| costNote   | string   | No       | Max 2000 — the ledger entry's description (defaults to `"Agent cost"`) |
+
+When `cost > 0`, a khata `CREDIT` ledger entry (dealer owes the agent) is posted **atomically per created service**, linked to each new assignment via `assignmentId`.
+
+The `(processId, agentId, serviceId)` triple is unique. Services **already actively assigned** to that agent for the process are **skipped** (returned in `skippedServiceIds`); a triple whose assignment was previously **CANCELLED** is transparently **reactivated**. If **every** requested service is already live, `4230` is returned.
 
 ```json
 {
   "processId": "uuid-process",
   "agentId": "uuid-agent",
-  "serviceId": "uuid-service",
-  "note": "Please complete name transfer."
+  "serviceIds": ["uuid-service-1", "uuid-service-2"],
+  "note": "Please complete name transfer + insurance.",
+  "cost": 5000,
+  "costDate": "2026-07-10T00:00:00.000Z",
+  "costNote": "RTO job fee"
 }
 ```
 
-**Response (201):** `data` is the created assignment with nested `agent` (`agentId`, `firmName`, `agentName`, `displayName`), `service` (`serviceId`, `serviceName`, `shortName`), and `agentStatus` (`statusId`, `statusName`, `colour`) or `null`.
+**Response (201):** `data` is `{ "created": [...], "skippedServiceIds": [...] }`, where each `created` item is an assignment with nested `agent` (`agentId`, `firmName`, `agentName`, `displayName`), `service` (`serviceId`, `serviceName`, `shortName`), and `agentStatus` (`statusId`, `statusName`, `colour`) or `null`. `skippedServiceIds` lists services that were already assigned.
 
-**Error codes:** `4040` — vehicle process or RTO service not found; `4034` — process belongs to another dealer; `4228` — grant the agent access before assigning; `4090` — duplicate assignment (same process + agent + service); `4032`–`4033`, `4226` — dealer scope.
+**Error codes:** `4040` — vehicle process or an RTO service not found; `4034` — process belongs to another dealer; `4228` — grant the agent access before assigning; `4230` — all requested services are already assigned to this agent (edit those assignments instead); `4220` — invalid body (`serviceIds` empty / invalid `cost`); `4032`–`4033`, `4226` — dealer scope.
 
 ---
 
@@ -2689,9 +3711,39 @@ List the **non-cancelled** assignments for a vehicle process (oldest first). **D
 
 **Query params:** `processId` (UUID, required).
 
-**Response (200):** `data` is an array of assignments (same nested shape as create).
+**Response (200):** `data` is an array of assignments (same nested shape as create, **including `cost`** — the current live ledger cost per assignment, or `null`).
 
 **Error codes:** `4040` — process not found; `4034` — process belongs to another dealer; `4032`–`4033`, `4226` — dealer scope.
+
+---
+
+### PATCH /api/v1/process-assignments/:id/cost
+
+Set / change / remove the **agent cost** recorded in the ledger for an assignment. **Dealer-scoped** — the assignment must belong to the calling dealer. Because the ledger is append-only, editing behaves as follows:
+
+- Changing the **amount** posts a ledger **reversal + a new entry** (history preserved; every row's `balanceAfter` stays consistent).
+- Editing **only the date/description** updates the entry **in place** (no balance impact).
+- `cost: null` **removes** the cost (reverses the current entry); no active grant is required, so historical costs remain editable after a revoke/switch.
+
+**Auth:** Bearer token required.
+
+**Path params:** `id` = `assignmentId` (UUID).
+
+**Request body:**
+
+| Field    | Type          | Required | Meaning |
+|----------|---------------|----------|---------|
+| cost     | number \| null | No       | Positive to set the amount · `null` to remove · omitted to keep the amount (edit only date/note) |
+| costDate | string        | No       | ISO date — set the entry's book date |
+| costNote | string        | No       | Max 2000 — set the entry's description |
+
+```json
+{ "cost": 4000, "costDate": "2026-07-10T00:00:00.000Z" }
+```
+
+**Response (200):** `data` is the resulting live cost `{ ledgerEntryId, amount, entryDate, description }`, or `null` when the cost was removed / none exists.
+
+**Error codes:** `4040` — assignment not found; `4034` — assignment belongs to another dealer; `4220` — invalid `cost`; `4032`–`4033`, `4226` — dealer scope.
 
 ---
 
@@ -2717,7 +3769,7 @@ List the **caller agent's** non-cancelled assignments (newest first), optionally
 
 **Query params:** `dealerId` (UUID, optional — narrow to one source dealer).
 
-**Response (200):** `data` is an array; each item carries `service`, `agentStatus` (or `null`), and `process` (`processId`, `vehicle.registrationNumber`, and `dealer` summary `{ dealerId, firmName, dealerName, isPlaceholder }`).
+**Response (200):** `data` is an array; each item carries `service`, `agentStatus` (or `null`), and `process` (`processId`, `vehicle.registrationNumber`, `dealer` summary `{ dealerId, firmName, dealerName, isPlaceholder }`, and `tags` — `[{ tagId, tagName, colour }]` ordered by `tagName`, `[]` when none).
 
 **Error codes:** `4035`–`4036`, `4226` — agent scope.
 
@@ -2844,27 +3896,33 @@ Delete a placeholder dealer owned by the calling agent. **Blocked** when the pla
 
 ### POST /api/v1/placeholder-dealers/:id/connect
 
-Connect a placeholder dealer to a **real subscribed dealer**. Sets `connectedDealerId` and creates/reactivates a `CONNECT` grant so the agent gains access to the real dealer.
+Connect a placeholder to a **real subscribed dealer** AND **migrate** everything the agent managed under the placeholder onto that real dealer — atomically. In one transaction it re-points the placeholder's `VehicleProcess`, `ProcessAssignment`, `ProcessReference`, and `DealerReference` rows to the real dealer (process children ride along via `processId`), **merges the placeholder's khata** into the real dealer's account (moves the `LedgerEntry` rows tagged with `sourceDealerId = placeholderId`, recomputes the account's running balance/totals, drops the emptied placeholder account), then creates/reactivates the `CONNECT` grant and sets `connectedDealerId`. Both the real dealer (on their own login) and the agent (via the CONNECT grant) then see the same data on the dealer's name.
 
-**Auth:** Bearer token required.
+**Auth:** Bearer token required (agent; must own the placeholder).
 
-**Path params:** `id` = placeholder `dealerId` (UUID).
-
-**Request body:** `realDealerId` (UUID, required — target real dealer).
+**Path params:** `id` = placeholder `dealerId` (UUID). **Request body:** `realDealerId` (UUID, required).
 
 ```json
 { "realDealerId": "uuid-real-dealer" }
 ```
 
-**Response (200):** `data` is the updated placeholder dealer with its `connectedDealer` summary.
+**Response (200):** `data` is `{ placeholder (with connectedDealer), migratedProcesses, migratedAssignments, ledgerEntriesMerged }`.
 
-**Error codes:** `4040` — placeholder or target dealer not found; `4037` — not an owned placeholder; `4098` — cannot connect: target is not a subscribed real dealer; `4035` — not linked to an agent.
+**Error codes:** `4040` — placeholder or target not found; `4037` — not an owned placeholder; `4098` — target is not a subscribed real dealer; `4035` — not linked to an agent.
+
+---
+
+### POST /api/v1/placeholder-dealers/:id/connect-admin
+
+**Super-admin only.** Same connect + migration as above, but for **any** agent's placeholder (uses the placeholder's owner as the agent). Body/response identical to `/connect`.
+
+**Error codes:** `4038` — not a super-admin; `4040` — placeholder/target not found; `4226` — the row is not an agent placeholder; `4098` — target is not a subscribed real dealer.
 
 ---
 
 ### POST /api/v1/placeholder-dealers/:id/disconnect
 
-Disconnect a placeholder dealer from its real dealer. Clears `connectedDealerId` and revokes the `CONNECT` grant when one was present.
+Disconnect a placeholder dealer from its real dealer. Clears `connectedDealerId` and revokes the `CONNECT` grant when one was present. **Migrated data stays with the real dealer** (disconnect does not un-migrate — the placeholder is left empty).
 
 **Auth:** Bearer token required.
 
@@ -3336,3 +4394,34 @@ Upload a single image of an Indian identity document (Aadhaar, PAN, Driving Lice
 - `5020` — Gemini API call failed.
 - `5021` — Gemini response was not valid JSON after sanitization.
 
+
+---
+## Registrations (public self-registration → super-admin approval)
+
+Self-service signup for dealers/agents. A visitor registers (choosing dealer or agent and setting their own password); the account is created **PENDING** with the login email **unverified**, and a signup OTP is emailed. They verify the email (`POST /auth/verify-otp`, which signs them in) and land on a **pending-approval** screen. A super-admin **approves** (unlocks access; a dealer is also marked subscribed) or **rejects** (blocks access, with a reason). Firms created by a super-admin or via an agent invitation are `APPROVED` by default, so only self-registrations are gated.
+
+> **Access gate.** While a linked dealer/agent firm is `PENDING`/`REJECTED`, its token is accepted only on `/auth/*` routes (e.g. `/auth/me`, logout); every other authenticated route returns **403 `4021`**. The token carries `approvalStatus`; `GET /auth/me` returns the fresh (DB-read) value so the pending screen can detect approval, then refresh the token.
+
+### POST /api/v1/registrations
+
+**Public.** Create a self-registration. Provisions the dealer/agent firm (`PENDING`) + login user (email unverified) + link, then emails a signup OTP.
+
+Body: `registerAs` (`DEALER`|`AGENT`, req), `applicantName` (req), `firmName` (req), `emailId` (req), `mobileNo` (req), `password` (req, min 8), `whatsappNo?`, `address?`, `city?`, `state?`, `pincode?`.
+
+Success `201`: `{ emailId, registerAs }`. Then verify via `POST /auth/verify-otp` (`purpose: SIGNUP_EMAIL_VERIFICATION`). Errors: `4091` (email already an account), `4220`.
+
+### GET /api/v1/auth/me
+
+**Auth (any).** Returns `{ user: { userId, emailId, userName, emailVerified, dealerId, agentId, isSuperAdmin, approvalStatus, approvalReason } }` with a fresh approval state. Allowed even for a pending/rejected firm.
+
+### GET /api/v1/registrations
+
+**Super-admin.** Paginated registration requests (merged dealers + agents), default `PENDING`+`REJECTED`, newest first. Query: `page?`, `limit?`, `status?` (`PENDING`|`APPROVED`|`REJECTED`). Each item: `{ kind: 'dealer'|'agent', id, firmName, applicantName, emailId, mobileNo, approvalStatus, approvalReason, createdAt }`. Errors: `4038`.
+
+### POST /api/v1/registrations/:kind/:id/approve
+
+**Super-admin.** Approve a registration (`kind` = `dealer`|`agent`): sets `APPROVED`, clears the reason (a dealer is also marked subscribed), emails the applicant. Errors: `4065` not found, `4038`.
+
+### POST /api/v1/registrations/:kind/:id/reject
+
+**Super-admin.** Reject a registration with an optional reason (emailed). Body: `{ reason? }`. Sets `REJECTED`. Errors: `4065`, `4038`.

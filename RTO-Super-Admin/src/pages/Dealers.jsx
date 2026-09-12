@@ -1,12 +1,13 @@
 import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
-import { Plus, Edit, Trash2, Store } from 'lucide-react'
+import { Plus, Edit, Trash2, Store, UserCog } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
 import { ConfirmModal } from '@/components/modals/ConfirmModal'
 import { DealerFormDialog } from '@/components/dealers/DealerFormDialog'
+import { AgentSlotsDialog } from '@/components/dealers/AgentSlotsDialog'
 import { DataTable } from '@/components/tables/DataTable'
 import { dealerService, getDealerId } from '@/services/dealerService'
 import { getErrorMessage } from '@/lib/authErrors'
@@ -37,6 +38,7 @@ export default function Dealers() {
   const [page, setPage] = useState(1)
   const [formOpen, setFormOpen] = useState(false)
   const [editDealer, setEditDealer] = useState(null)
+  const [slotsDealer, setSlotsDealer] = useState(null)
   const [deleteTarget, setDeleteTarget] = useState(null)
   const queryClient = useQueryClient()
 
@@ -135,6 +137,15 @@ export default function Dealers() {
             <Button
               variant="ghost"
               size="icon"
+              onClick={() => setSlotsDealer(row)}
+              aria-label="Set agent slots"
+              title="Agent slots"
+            >
+              <UserCog className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
               onClick={() => setDeleteTarget(row)}
               aria-label="Delete dealer"
             >
@@ -215,6 +226,12 @@ export default function Dealers() {
         onSubmit={handleUpdate}
         loading={updateMutation.isPending}
         submitLabel="Save Changes"
+      />
+
+      <AgentSlotsDialog
+        open={!!slotsDealer}
+        onOpenChange={(open) => !open && setSlotsDealer(null)}
+        dealer={slotsDealer}
       />
 
       <ConfirmModal

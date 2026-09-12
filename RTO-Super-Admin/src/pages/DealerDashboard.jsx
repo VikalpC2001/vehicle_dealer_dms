@@ -2,17 +2,13 @@ import { useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
-import { Car, Clock, Loader2, CheckCircle2, Plus, BarChart3 } from 'lucide-react'
+import { Car, Tags, Tag, CalendarDays, Plus, BarChart3 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
+import { TagChip } from '@/components/vehicle-process/TagChip'
 import { vehicleProcessService, getProcessId } from '@/services/vehicleProcessService'
 import { formatDate } from '@/lib/utils'
-
-function countByStatus(processes, match) {
-  return processes.filter((p) => (p.status ?? '').trim().toLowerCase() === match).length
-}
 
 function StatTile({ icon: Icon, label, value, index }) {
   return (
@@ -48,15 +44,24 @@ export default function DealerDashboard() {
   const processes = useMemo(() => data?.processes ?? [], [data])
   const total = data?.total ?? 0
 
-  const stats = useMemo(
-    () => [
+  const stats = useMemo(() => {
+    const tagged = processes.filter((p) => (p.tags ?? []).length > 0).length
+    const now = new Date()
+    const thisMonth = processes.filter((p) => {
+      if (!p.processDate) return false
+      const d = new Date(p.processDate)
+      return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear()
+    }).length
+    return [
       { icon: Car, label: 'Total Processes', value: total },
-      { icon: Clock, label: 'Pending', value: countByStatus(processes, 'pending') },
-      { icon: Loader2, label: 'In Progress', value: countByStatus(processes, 'in progress') },
-      { icon: CheckCircle2, label: 'Complete', value: countByStatus(processes, 'complete') },
-    ],
-    [processes, total]
-  )
+      { icon: Tags, label: 'Tagged', value: tagged },
+      // Base "Untagged" on the server total so Tagged + Untagged == Total. (Both `tagged` and the
+      // month count are derived from the first 100 rows — see the wide-page fetch above — so for
+      // >100 processes this split is approximate until a dedicated stats endpoint exists.)
+      { icon: Tag, label: 'Untagged', value: Math.max(0, total - tagged) },
+      { icon: CalendarDays, label: 'Added This Month', value: thisMonth },
+    ]
+  }, [processes, total])
 
   const recent = processes.slice(0, 5)
 
@@ -121,13 +126,21 @@ export default function DealerDashboard() {
                       onClick={() => id && navigate(`/dealer/processes/${id}`)}
                       className="flex w-full items-center justify-between py-3 text-left transition-colors hover:bg-muted/40"
                     >
-                      <div>
+                      <div className="min-w-0">
                         <p className="text-sm font-semibold">{reg}</p>
                         {proc.processDate && (
                           <p className="text-xs text-muted-foreground">{formatDate(proc.processDate)}</p>
                         )}
                       </div>
-                      <Badge variant="secondary">{proc.status ?? 'Pending'}</Badge>
+                      {(proc.tags ?? []).length > 0 ? (
+                        <div className="flex max-w-[55%] flex-wrap justify-end gap-1">
+                          {proc.tags.map((t) => (
+                            <TagChip key={t.tagId} name={t.tagName} colour={t.colour} />
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="shrink-0 text-xs text-muted-foreground">No tags</span>
+                      )}
                     </button>
                   )
                 })}

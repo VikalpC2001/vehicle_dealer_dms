@@ -19,6 +19,13 @@ enum PersonType {
   BUYER
 }
 
+/// Lifecycle of a person on a process. A buyer is CANCELLED (kept for history) when replaced, so
+/// only one ACTIVE buyer exists at a time.
+enum PersonStatus {
+  ACTIVE
+  CANCELLED
+}
+
 enum ReferenceType {
   BUY
   SELL
@@ -49,6 +56,14 @@ enum DealerAgentSource {
   CONNECT
 }
 
+/// Lifecycle of a dealer→agent email invitation (single-use onboarding link).
+enum AgentInvitationStatus {
+  PENDING
+  ACCEPTED
+  EXPIRED
+  CANCELLED
+}
+
 /// Process→agent assignment lifecycle (coarse).
 enum AssignmentStatus {
   OPEN
@@ -61,6 +76,30 @@ enum AssignmentStatus {
 enum LedgerDirection {
   CREDIT
   DEBIT
+}
+
+/// Persona that authored a process comment (derived from the JWT at write time).
+enum CommentAuthorRole {
+  DEALER
+  AGENT
+  ADMIN
+}
+
+/// Approval state of a self-registered dealer/agent. Super-admin-created and invited firms default
+/// to APPROVED; only public self-registrations start PENDING and gate access until reviewed.
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+/// Fixed lifecycle status of a vehicle process. A process starts with NO status (null); the dealer
+/// sets one later. A vehicle may have at most one status-less (open) process per dealer at a time —
+/// once it carries a terminal status, a new process can be created for the same vehicle.
+enum VehicleProcessStatus {
+  SOLD
+  COMPLETE
+  SCRAP
 }
 
 // ---------------------------------------------------------------------------
@@ -113,7 +152,9 @@ model User {
   dealerWiseUsers      DealerWiseUser[]
   agentWiseUsers       AgentWiseUser[]
   assignedProcessTasks ProcessTask[]       @relation("ProcessTaskAssignee")
+  taskComments         TaskComment[]
   assignedAssignments  ProcessAssignment[] @relation("AssignmentAssignedBy")
+  processComments      ProcessComment[]
 
   @@map("users")
 }
@@ -173,6 +214,10 @@ model Dealer {
   displayName       String   @map("display_name") @db.VarChar(255)
   whatsappNo        String?  @unique @map("whatsapp_no") @db.VarChar(20)
   isSubscribe       Boolean  @default(false) @map("is_subscribe")
+  // Self-registration approval gate. Defaults APPROVED so admin-created dealers stay open; a public
+  // self-registration sets PENDING and is blocked from the app until a super-admin approves.
+  approvalStatus    ApprovalStatus @default(APPROVED) @map("approval_status")
+  approvalReason    String?  @map("approval_reason") @db.Text
   // How many agents this dealer may grant via DEALER_GRANT (super-admin-configurable later).
   maxAgents         Int      @default(2) @map("max_agents")
   // Placeholder dealer = name-only container owned by an agent (no dealer site/login).
@@ -183,13 +228,17 @@ model Dealer {
   createdAt         DateTime @default(now()) @map("created_at") @db.Timestamp(6)
   updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
 
-  dealerStatuses             DealerStatus[]
   dealerReferences           DealerReference[]
+  dealerTaskStatuses         DealerTaskStatus[]
+  dealerTaskTemplates        DealerTaskTemplate[]
+  dealerTags                 DealerTag[]
+  dealerRoles                DealerRole[]
   vehicleProcesses           VehicleProcess[]
   processReferences          ProcessReference[]
   dealerWiseUploadCategories DealerWiseUploadCategory[]
   dealerWiseUsers            DealerWiseUser[]
   dealerAgents               DealerAgent[]
+  agentInvitations           AgentInvitation[]
   processAssignments         ProcessAssignment[]
   ownerAgent                 Agent?                     @relation("PlaceholderOwner", fields: [ownerAgentId], references: [agentId], onDelete: Cascade)
   connectedDealer            Dealer?                    @relation("PlaceholderConnect", fields: [connectedDealerId], references: [dealerId], onDelete: SetNull)
@@ -218,16 +267,20 @@ model Agent {
   displayName String   @map("display_name") @db.VarChar(255)
   whatsappNo  String?  @unique @map("whatsapp_no") @db.VarChar(20)
   isSubscribe Boolean  @default(false) @map("is_subscribe")
+  // Self-registration approval gate (see Dealer.approvalStatus). Defaults APPROVED.
+  approvalStatus ApprovalStatus @default(APPROVED) @map("approval_status")
+  approvalReason String?  @map("approval_reason") @db.Text
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamp(6)
   updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
 
-  agentWiseUsers          AgentWiseUser[]
-  dealerAgents            DealerAgent[]
-  agentStatuses           AgentStatus[]
-  ownedPlaceholderDealers Dealer[]            @relation("PlaceholderOwner")
-  processAssignments      ProcessAssignment[]
-  khataAccounts           KhataAccount[]
-  ledgerEntries           LedgerEntry[]
+  agentWiseUsers            AgentWiseUser[]
+  dealerAgents              DealerAgent[]
+  agentStatuses             AgentStatus[]
+  ownedPlaceholderDealers   Dealer[]                  @relation("PlaceholderOwner")
+  processAssignments        ProcessAssignment[]
+  khataAccounts             KhataAccount[]
+  ledgerEntries             LedgerEntry[]
+  agentWiseUploadCategories AgentWiseUploadCategory[]
 
   @@map("agents")
 }
@@ -267,7 +320,32 @@ model DealerAgent {
   @@map("dealer_agent")
 }
 
-/// Per-agent kanban statuses for RTO work (mirror DealerStatus).
+/// A dealer's email invitation for a brand-new agent. A single-use onboarding link is emailed;
+/// its random token is stored HASHED (sha256 hex, like EmailOtp.otpHash). On accept, the agent
+/// account + login are created and (cap permitting) auto-granted to the inviting dealer. The row
+/// is retained (listable/resendable) and its status tracks the lifecycle.
+model AgentInvitation {
+  invitationId    String                @id @default(dbgenerated("gen_random_uuid()")) @map("invitation_id") @db.Uuid
+  dealerId        String                @map("dealer_id") @db.Uuid
+  agentName       String                @map("agent_name") @db.VarChar(255)
+  emailId         String                @map("email_id") @db.VarChar(255)
+  mobileNo        String?               @map("mobile_no") @db.VarChar(20)
+  tokenHash       String                @unique @map("token_hash") @db.VarChar(64)
+  status          AgentInvitationStatus @default(PENDING)
+  expiresAt       DateTime              @map("expires_at") @db.Timestamp(6)
+  acceptedAt      DateTime?             @map("accepted_at") @db.Timestamp(6)
+  createdByUserId String?               @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime              @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt       DateTime              @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  dealer Dealer @relation(fields: [dealerId], references: [dealerId], onDelete: Cascade)
+
+  @@index([dealerId])
+  @@index([emailId])
+  @@map("agent_invitation")
+}
+
+/// Per-agent kanban statuses for RTO work (mirror DealerTaskStatus).
 model AgentStatus {
   statusId   String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   agentId    String   @map("agent_id") @db.Uuid
@@ -279,6 +357,7 @@ model AgentStatus {
 
   agent              Agent               @relation(fields: [agentId], references: [agentId], onDelete: Cascade)
   processAssignments ProcessAssignment[]
+  vehicleProcesses   VehicleProcess[]
 
   @@unique([agentId, statusName])
   @@map("agent_status")
@@ -400,10 +479,14 @@ model UploadCategory {
   categoryName String   @unique @map("category_name") @db.VarChar(255)
   orderRank    Int      @default(0) @map("order_rank")
   bothSide     Boolean  @default(false) @map("both_side")
+  // Super-admin-managed OCR extraction endpoint for this document type. Dealers/agents inherit it
+  // (they no longer set their own); the create-process wizard sends the uploaded image here to auto-fill.
+  processApi   String?  @map("process_api") @db.VarChar(512)
   createdAt    DateTime @default(now()) @map("created_at") @db.Timestamp(6)
   updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
 
   dealerWiseUploadCategories DealerWiseUploadCategory[]
+  agentWiseUploadCategories  AgentWiseUploadCategory[]
 
   @@map("upload_category")
 }
@@ -431,19 +514,65 @@ model DealerWiseUploadCategory {
   @@map("dealer_wise_upload_category")
 }
 
+/// Per-agent selection of upload categories (mirror of DealerWiseUploadCategory) — lets an agent
+/// choose which documents their process wizard collects. Process photos still store the category
+/// NAME (string) on `ProcessUploadPhoto`, so this only feeds the wizard checklist + `processApi`.
+model AgentWiseUploadCategory {
+  awucId           String   @id @default(dbgenerated("gen_random_uuid()")) @map("awuc_id") @db.Uuid
+  agentId          String   @map("agent_id") @db.Uuid
+  uploadCategoryId String   @map("upload_category_id") @db.Uuid
+  processApi       String?  @map("process_api") @db.VarChar(512)
+  orderRank        Int      @default(0) @map("order_rank")
+  isRequired       Boolean  @default(false) @map("is_required")
+  isProcess        Boolean  @default(false) @map("is_process")
+  isViewInStep     Boolean  @default(false) @map("is_view_in_step")
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  agent          Agent          @relation(fields: [agentId], references: [agentId], onDelete: Cascade)
+  uploadCategory UploadCategory @relation(fields: [uploadCategoryId], references: [categoryId], onDelete: Cascade)
+
+  @@unique([agentId, uploadCategoryId])
+  @@index([agentId])
+  @@map("agent_wise_upload_category")
+}
+
 /// Links a platform user to exactly one dealer (`userId` is globally unique in this table).
 model DealerWiseUser {
   dwuId     String   @id @default(dbgenerated("gen_random_uuid()")) @map("dwu_id") @db.Uuid
   userId    String   @unique @map("user_id") @db.Uuid
   dealerId  String   @map("dealer_id") @db.Uuid
+  // The registering dealership account is the OWNER (full access, manages roles). Employees added
+  // later default to isOwner=false and get access via their assigned roleId (null = read-only default).
+  isOwner   Boolean  @default(false) @map("is_owner")
+  roleId    String?  @map("role_id") @db.Uuid
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamp(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
 
-  user   User   @relation(fields: [userId], references: [userId], onDelete: Cascade)
-  dealer Dealer @relation(fields: [dealerId], references: [dealerId], onDelete: Cascade)
+  user   User        @relation(fields: [userId], references: [userId], onDelete: Cascade)
+  dealer Dealer      @relation(fields: [dealerId], references: [dealerId], onDelete: Cascade)
+  role   DealerRole? @relation(fields: [roleId], references: [roleId], onDelete: SetNull)
 
   @@index([dealerId])
+  @@index([roleId])
   @@map("dealer_wise_user")
+}
+
+/// Per-dealer role in the fixed-capability access model. `capabilities` holds capability keys from a
+/// curated catalog (shared CAPABILITIES list). Assigned to employees via DealerWiseUser.roleId.
+model DealerRole {
+  roleId       String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  dealerId     String   @map("dealer_id") @db.Uuid
+  roleName     String   @map("role_name") @db.VarChar(255)
+  capabilities String[] @map("capabilities")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  dealer  Dealer           @relation(fields: [dealerId], references: [dealerId], onDelete: Cascade)
+  members DealerWiseUser[]
+
+  @@unique([dealerId, roleName])
+  @@map("dealer_role")
 }
 
 // ---------------------------------------------------------------------------
@@ -470,22 +599,57 @@ model Vehicle {
 }
 
 // ---------------------------------------------------------------------------
-// DEALER STATUS MASTER
+// DEALER TASK STATUS MASTER
 // ---------------------------------------------------------------------------
 
-model DealerStatus {
+/// Per-dealer TASK-board columns (Jira-like task statuses). `isDone` marks terminal columns — moving
+/// a task in sets ProcessTask.completedAt.
+model DealerTaskStatus {
   statusId   String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   dealerId   String   @map("dealer_id") @db.Uuid
   statusName String   @map("status_name") @db.VarChar(255)
   colour     String?  @db.VarChar(50)
   statusRank Int      @default(0) @map("status_rank")
+  isDone     Boolean  @default(false) @map("is_done")
   createdAt  DateTime @default(now()) @map("created_at") @db.Timestamp(6)
   updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
 
   dealer Dealer @relation(fields: [dealerId], references: [dealerId], onDelete: Cascade)
 
   @@unique([dealerId, statusName])
-  @@map("dealer_status")
+  @@map("dealer_task_status")
+}
+
+/// Per-dealer predefined job/task catalog (e.g. "PUC", "Insurance", "Name transfer"). Picked when
+/// creating a task; a custom task name is still allowed if not in the list.
+model DealerTaskTemplate {
+  templateId   String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  dealerId     String   @map("dealer_id") @db.Uuid
+  templateName String   @map("template_name") @db.VarChar(255)
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  dealer Dealer @relation(fields: [dealerId], references: [dealerId], onDelete: Cascade)
+
+  @@unique([dealerId, templateName])
+  @@map("dealer_task_template")
+}
+
+/// Per-dealer TAG master (Finder-style coloured labels). A VehicleProcess can carry MULTIPLE tags
+/// via the ProcessTag join. Mirrors DealerTaskStatus/DealerTaskTemplate (per-dealer, cascade-deleted).
+model DealerTag {
+  tagId     String   @id @default(dbgenerated("gen_random_uuid()")) @map("tag_id") @db.Uuid
+  dealerId  String   @map("dealer_id") @db.Uuid
+  tagName   String   @map("tag_name") @db.VarChar(255)
+  colour    String?  @db.VarChar(50)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  dealer      Dealer       @relation(fields: [dealerId], references: [dealerId], onDelete: Cascade)
+  processTags ProcessTag[]
+
+  @@unique([dealerId, tagName])
+  @@map("dealer_tag")
 }
 
 // ---------------------------------------------------------------------------
@@ -511,21 +675,34 @@ model DealerReference {
 // ---------------------------------------------------------------------------
 
 model VehicleProcess {
-  processId   String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  vehicleId   String?   @map("vehicle_id") @db.Uuid
-  dealerId    String?   @map("dealer_id") @db.Uuid
-  status      String?   @map("status") @db.VarChar(255)
-  processDate DateTime? @map("process_date") @db.Timestamp(6)
+  processId         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  vehicleId         String?   @map("vehicle_id") @db.Uuid
+  dealerId          String?   @map("dealer_id") @db.Uuid
+  // Agent-kanban column for agent-created (placeholder-dealer) processes shown on the agent board.
+  // Mirrors ProcessAssignment.agentStatusId.
+  agentStatusId     String?   @map("agent_status_id") @db.Uuid
+  processDate       DateTime? @map("process_date") @db.Timestamp(6)
   // Buy/sell prices for the per-vehicle history (dealer-scoped → private per dealer; never on Vehicle).
   // purchasePrice pairs with the SELLER person (what the dealer paid); salePrice with the BUYER.
-  purchasePrice Decimal? @map("purchase_price") @db.Decimal(14, 2)
-  salePrice     Decimal? @map("sale_price") @db.Decimal(14, 2)
-  priceCurrency String?  @default("INR") @map("price_currency") @db.VarChar(3)
-  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
-  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamp(6)
+  purchasePrice     Decimal?  @map("purchase_price") @db.Decimal(14, 2)
+  salePrice         Decimal?  @map("sale_price") @db.Decimal(14, 2)
+  priceCurrency     String?   @default("INR") @map("price_currency") @db.VarChar(3)
+  // RTO receipt (PDF or image) uploaded by the agent working the process; the dealer can download it.
+  // Storage key (folder-scoped, like document photos); resolved to a URL for viewing/download.
+  receiptImageName  String?   @map("receipt_image_name") @db.VarChar(512)
+  receiptUploadedAt DateTime? @map("receipt_uploaded_at") @db.Timestamp(6)
+  // Post/courier tracking number the agent enters after dispatching the new RC book (optional); the
+  // dealer uses it to track the RC book.
+  trackingNumber    String?   @map("tracking_number") @db.VarChar(255)
+  // Fixed lifecycle status (Sold/Complete/Scrap); null = open (unset). At most one open process per
+  // vehicle per dealer — enforced in the create service, not by a DB constraint (null-scoped uniqueness).
+  status            VehicleProcessStatus? @map("status")
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamp(6)
 
   vehicle             Vehicle?             @relation(fields: [vehicleId], references: [vehicleId])
   dealer              Dealer?              @relation(fields: [dealerId], references: [dealerId])
+  agentStatus         AgentStatus?         @relation(fields: [agentStatusId], references: [statusId], onDelete: SetNull)
   persons             Person[]
   processReferences   ProcessReference[]
   processUploadImages ProcessUploadImage[]
@@ -533,8 +710,11 @@ model VehicleProcess {
   processTasks        ProcessTask[]
   processAssignments  ProcessAssignment[]
   processExpenses     ProcessExpense[]
+  processComments     ProcessComment[]
+  processTags         ProcessTag[]
 
   @@index([vehicleId])
+  @@index([agentStatusId])
   @@map("vehicle_process")
 }
 
@@ -554,6 +734,21 @@ model ProcessExpense {
 
   @@index([processId])
   @@map("process_expenses")
+}
+
+/// Join between a VehicleProcess and a DealerTag (many-to-many). Composite PK; cascade-deleted when
+/// either the process or the tag is removed.
+model ProcessTag {
+  processId String   @map("process_id") @db.Uuid
+  tagId     String   @map("tag_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamp(6)
+
+  process VehicleProcess @relation(fields: [processId], references: [processId], onDelete: Cascade)
+  tag     DealerTag      @relation(fields: [tagId], references: [tagId], onDelete: Cascade)
+
+  @@id([processId, tagId])
+  @@index([tagId])
+  @@map("process_tag")
 }
 
 /// Image stored for a vehicle process, scoped to a dealer-wise upload category row (`dwucId`).
@@ -580,12 +775,17 @@ model ProcessUploadPhoto {
   processId            String   @map("process_id") @db.Uuid
   category             String   @map("category") @db.VarChar(255)
   imageName            String   @map("image_name") @db.VarChar(255)
+  // Optional owner person — set for a buyer's ID-proof photo so it travels with that buyer (a
+  // cancelled buyer's ID stays viewable under them). Nulled if the person is removed.
+  personId             String?  @map("person_id") @db.Uuid
   createdAt            DateTime @default(now()) @map("created_at") @db.Timestamp(6)
   updatedAt            DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
 
   process VehicleProcess @relation(fields: [processId], references: [processId], onDelete: Cascade)
+  person  Person?        @relation(fields: [personId], references: [personId], onDelete: SetNull)
 
   @@index([processId])
+  @@index([personId])
   @@map("process_upload_photo")
 }
 
@@ -597,15 +797,57 @@ model ProcessTask {
   taskDate      DateTime @map("task_date") @db.Timestamp(6)
   assignUserId  String?  @map("assign_user_id") @db.Uuid
   status        String   @default("To-Do") @map("status") @db.VarChar(50)
+  // Set when the task moves into a "done" task status (DealerTaskStatus.isDone); cleared if it moves
+  // back. Drives the board's "Recently completed (15 days)" column.
+  completedAt   DateTime? @map("completed_at") @db.Timestamp(6)
   createdAt     DateTime @default(now()) @map("created_at") @db.Timestamp(6)
   updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamp(6)
 
   process    VehicleProcess @relation(fields: [processId], references: [processId], onDelete: Cascade)
   assignUser User?          @relation("ProcessTaskAssignee", fields: [assignUserId], references: [userId], onDelete: SetNull)
+  comments   TaskComment[]
 
   @@index([processId])
   @@index([assignUserId])
+  @@index([completedAt])
   @@map("process_task")
+}
+
+/// A shared, Jira-style comment thread anchored on a vehicle process. Both the dealer owner and
+/// the agent (assigned or managing) read and post to the same thread, so agent comments appear on
+/// the dealer's assigned process and vice-versa. Cascade-deleted with the process; the author link
+/// is nulled (not deleted) if the user is removed.
+model ProcessComment {
+  commentId    String            @id @default(dbgenerated("gen_random_uuid()")) @map("comment_id") @db.Uuid
+  processId    String            @map("process_id") @db.Uuid
+  authorUserId String?           @map("author_user_id") @db.Uuid
+  authorRole   CommentAuthorRole @map("author_role")
+  body         String            @db.Text
+  createdAt    DateTime          @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt    DateTime          @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  process VehicleProcess @relation(fields: [processId], references: [processId], onDelete: Cascade)
+  author  User?          @relation(fields: [authorUserId], references: [userId], onDelete: SetNull)
+
+  @@index([processId, createdAt])
+  @@map("process_comment")
+}
+
+/// Per-task comment thread (Jira-style ticket comments). Mirrors ProcessComment, anchored on a task.
+model TaskComment {
+  commentId     String            @id @default(dbgenerated("gen_random_uuid()")) @map("comment_id") @db.Uuid
+  processTaskId String            @map("process_task_id") @db.Uuid
+  authorUserId  String?           @map("author_user_id") @db.Uuid
+  authorRole    CommentAuthorRole @map("author_role")
+  body          String            @db.Text
+  createdAt     DateTime          @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt     DateTime          @updatedAt @map("updated_at") @db.Timestamp(6)
+
+  task   ProcessTask @relation(fields: [processTaskId], references: [processTaskId], onDelete: Cascade)
+  author User?       @relation(fields: [authorUserId], references: [userId], onDelete: SetNull)
+
+  @@index([processTaskId, createdAt])
+  @@map("task_comment")
 }
 
 // ---------------------------------------------------------------------------
@@ -613,17 +855,20 @@ model ProcessTask {
 // ---------------------------------------------------------------------------
 
 model Person {
-  personId     String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  personName   String     @map("person_name") @db.VarChar(255)
-  address      String?    @db.Text
-  mobileNumber String     @map("mobile_number") @db.VarChar(20)
-  personType   PersonType @map("person_type")
-  processId    String     @map("process_id") @db.Uuid
-  createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamp(6)
-  updatedAt    DateTime   @updatedAt @map("updated_at") @db.Timestamp(6)
+  personId     String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  personName   String       @map("person_name") @db.VarChar(255)
+  address      String?      @db.Text
+  mobileNumber String       @map("mobile_number") @db.VarChar(20)
+  personType   PersonType   @map("person_type")
+  status       PersonStatus @default(ACTIVE)
+  processId    String       @map("process_id") @db.Uuid
+  createdAt    DateTime     @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt    DateTime     @updatedAt @map("updated_at") @db.Timestamp(6)
 
-  process VehicleProcess @relation(fields: [processId], references: [processId], onDelete: Cascade)
+  process      VehicleProcess       @relation(fields: [processId], references: [processId], onDelete: Cascade)
+  uploadPhotos ProcessUploadPhoto[]
 
+  @@index([processId])
   @@map("persons")
 }
 

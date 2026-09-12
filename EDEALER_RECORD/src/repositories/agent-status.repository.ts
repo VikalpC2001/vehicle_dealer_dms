@@ -142,6 +142,37 @@ export async function findAgentStatusById(
 }
 
 /**
+ * Returns the agent's lowest-ranked kanban status (the default column for new agent-created
+ * processes), or `null` when the agent has no statuses configured.
+ *
+ * @param agentId - The owning agent.
+ */
+export async function findFirstAgentStatusForAgent(
+  agentId: string,
+): Promise<AgentStatus | null> {
+  return prisma.agentStatus.findFirst({
+    where: { agentId },
+    orderBy: { statusRank: 'asc' },
+  });
+}
+
+/**
+ * Returns the agent status row when it belongs to the given agent, or `null` otherwise. Used to
+ * verify an agent may move a process into a status they actually own.
+ *
+ * @param agentId - The owning agent.
+ * @param statusId - Candidate agent status UUID.
+ */
+export async function findAgentStatusOwnedByAgent(
+  agentId: string,
+  statusId: string,
+): Promise<AgentStatus | null> {
+  return prisma.agentStatus.findFirst({
+    where: { statusId, agentId },
+  });
+}
+
+/**
  * Finds an agent status by agentId and statusName. Optionally exclude a status ID (for update uniqueness check).
  */
 export async function findAgentStatusByAgentIdAndStatusName(

@@ -1,5 +1,5 @@
 import { prisma } from '../config/prisma';
-import type { Agent } from '@prisma/client';
+import type { Agent, ApprovalStatus } from '@prisma/client';
 
 /**
  * Data required to create a new agent. firmName, agentName, and displayName are required;
@@ -17,6 +17,7 @@ export interface CreateAgentData {
   displayName: string;
   whatsappNo?: string | null;
   isSubscribe?: boolean;
+  approvalStatus?: ApprovalStatus;
 }
 
 /**
@@ -69,6 +70,7 @@ export async function createAgent(data: CreateAgentData): Promise<Agent> {
         displayName: data.displayName,
         whatsappNo: data.whatsappNo ?? null,
         isSubscribe: data.isSubscribe ?? false,
+        approvalStatus: data.approvalStatus,
       },
     });
     await tx.agentStatus.createMany({
@@ -165,6 +167,45 @@ export async function updateAgent(
   return prisma.agent.update({
     where: { agentId },
     data,
+  });
+}
+
+/** Sets an agent's subscription flag (super-admin subscription management). */
+export async function setAgentSubscription(
+  agentId: string,
+  isSubscribe: boolean,
+): Promise<Agent> {
+  return prisma.agent.update({
+    where: { agentId },
+    data: { isSubscribe },
+  });
+}
+
+/**
+ * Sets an agent's self-registration approval state (and optional reason for a rejection).
+ */
+export async function setAgentApproval(
+  agentId: string,
+  approvalStatus: ApprovalStatus,
+  approvalReason: string | null,
+): Promise<Agent> {
+  return prisma.agent.update({
+    where: { agentId },
+    data: { approvalStatus, approvalReason },
+  });
+}
+
+/**
+ * Lists agents whose approval is in the given states (newest first) — super-admin request queue.
+ * Only agents with a **verified** linked login are returned (abandoned self-registrations are hidden).
+ */
+export async function listAgentsByApprovalStatuses(statuses: ApprovalStatus[]): Promise<Agent[]> {
+  return prisma.agent.findMany({
+    where: {
+      approvalStatus: { in: statuses },
+      agentWiseUsers: { some: { user: { emailVerified: true } } },
+    },
+    orderBy: { createdAt: 'desc' },
   });
 }
 

@@ -21,6 +21,8 @@ export interface CreateAgentWiseUserWithUserInput {
   emailId: string;
   mobileNo: string;
   password: string;
+  /** Defaults true (admin-created logins skip OTP). Self-registration passes false → verify via OTP. */
+  emailVerified?: boolean;
 }
 
 /**
@@ -110,7 +112,7 @@ export async function createAgentWiseUserWithUser(
     userName: input.userName,
     mobileNo: input.mobileNo,
     gender: null,
-    emailVerified: true,
+    emailVerified: input.emailVerified ?? true,
   });
   const existingLink = await agentWiseUserRepository.findAgentWiseUserByUserId(user.userId);
   if (existingLink) {

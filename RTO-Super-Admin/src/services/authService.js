@@ -52,6 +52,9 @@ function normalizeAuthResponse(data) {
         dealerId,
         agentId,
         isSuperAdmin,
+        // Self-registration approval gate of the linked firm (super-admin/unlinked → treated approved).
+        approvalStatus: raw.approvalStatus ?? 'APPROVED',
+        approvalReason: raw.approvalReason ?? null,
         // super-admin (flag) → dealer (link) → agent (link) → 'none' (no workspace).
         role: isSuperAdmin ? 'super_admin' : dealerId ? 'dealer' : agentId ? 'agent' : 'none',
       }
@@ -91,6 +94,67 @@ export const authService = {
   async register(formData) {
     const { data } = await api.post('/auth/register', formData)
     return data
+  },
+
+  /** GET /auth/me — current user with a fresh (DB-read) approval state. Allowed while pending. */
+  async getMe() {
+    const { data } = await api.get('/auth/me')
+    const { user } = normalizeAuthResponse(data)
+    return user
+  },
+
+  /**
+   * Re-reads approval state (and, once APPROVED, rotates the access token so app routes unlock).
+   * Updates the stored user. Returns the fresh user (or null if the session is gone).
+   */
+  async refreshApproval() {
+    const me = await this.getMe()
+    if (!me) return null
+    if (me.approvalStatus === 'APPROVED') {
+      const refreshToken = getTokenStorage()?.getItem(REFRESH_TOKEN_KEY)
+      if (refreshToken) {
+        try {
+          const { data } = await api.post('/auth/refresh', { refreshToken })
+          const payload = data?.data ?? data
+          const storage = getTokenStorage() ?? localStorage
+          if (payload?.token) storage.setItem(TOKEN_KEY, payload.token)
+          if (payload?.refreshToken) storage.setItem(REFRESH_TOKEN_KEY, payload.refreshToken)
+        } catch {
+          // keep the current token; app routes will retry via the 401 interceptor
+        }
+      }
+    }
+    localStorage.setItem(USER_KEY, JSON.stringify(me))
+    return me
+  },
+
+  /**
+   * Hydrates a session from an already-issued token bundle (e.g. the response of agent-invitation
+   * acceptance, which logs the new agent straight in). Mirrors `login`'s storage side effects but
+   * skips the /auth/login call. Returns the normalized `{ user, token, refreshToken }`.
+   *
+   * @param {object} data - The raw API response body carrying `{ token, refreshToken, user }`.
+   * @param {{ rememberMe?: boolean }} [opts]
+   */
+  setSession(data, { rememberMe = true } = {}) {
+    const { token, refreshToken, user } = normalizeAuthResponse(data)
+    if (!token) {
+      throw new Error('Invalid response from server. No token received.')
+    }
+    const storage = getStorage(rememberMe)
+    storage.setItem(TOKEN_KEY, token)
+    if (refreshToken) storage.setItem(REFRESH_TOKEN_KEY, refreshToken)
+
+    const userProfile = user ?? {
+      name: null,
+      email: null,
+      dealerId: null,
+      agentId: null,
+      isSuperAdmin: false,
+      role: 'none',
+    }
+    localStorage.setItem(USER_KEY, JSON.stringify(userProfile))
+    return { user: userProfile, token, refreshToken }
   },
 
   async forgotPassword(email) {

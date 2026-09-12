@@ -2,6 +2,7 @@ import { StatusCodes } from 'http-status-codes';
 import type { ProcessUploadPhoto } from '@prisma/client';
 import * as processUploadPhotoRepository from '../repositories/process-upload-photo.repository';
 import * as vehicleProcessRepository from '../repositories/vehicle-process.repository';
+import { uploadService } from './upload.service';
 import { AppError } from '../utils/app-error';
 
 export interface CreateProcessUploadPhotoInput {
@@ -57,11 +58,29 @@ export async function createProcessUploadPhoto(
   input: CreateProcessUploadPhotoInput,
 ): Promise<ProcessUploadPhoto> {
   await assertProcessOwnedByDealer(input.processId, dealerId);
-  return processUploadPhotoRepository.createProcessUploadPhoto({
-    processId: input.processId,
-    category: input.category.trim(),
-    imageName: input.imageName.trim(),
-  });
+  // Relocate the flat-uploaded file into this process's folder so all its documents stay together.
+  const registrationNumber = await vehicleProcessRepository.findVehicleRegistrationForProcess(
+    input.processId,
+  );
+  const originalKey = input.imageName.trim();
+  const imageName = await uploadService.relocateToProcessFolder(
+    originalKey,
+    registrationNumber,
+    input.processId,
+  );
+  try {
+    return await processUploadPhotoRepository.createProcessUploadPhoto({
+      processId: input.processId,
+      category: input.category.trim(),
+      imageName,
+    });
+  } catch (err) {
+    // Roll the move back so the flat file stays valid for a retry when the write failed.
+    if (imageName !== originalKey) {
+      await uploadService.tryMove(imageName, originalKey);
+    }
+    throw err;
+  }
 }
 
 /**
@@ -82,7 +101,43 @@ export async function createManyProcessUploadPhotos(
   for (const row of normalized) {
     await assertProcessOwnedByDealer(row.processId, dealerId);
   }
-  return processUploadPhotoRepository.createManyProcessUploadPhotos(normalized);
+  // Relocate each flat-uploaded file into its process's folder (registration cached per process).
+  // The whole relocate-then-write span is guarded: any throw (a per-process registration lookup or
+  // the DB write) rolls back every move done so far, so no bytes are stranded and a retry succeeds.
+  const registrationByProcess = new Map<string, string | null>();
+  const relocated: Array<{
+    processId: string;
+    category: string;
+    imageName: string;
+    originalKey: string;
+  }> = [];
+  try {
+    for (const row of normalized) {
+      if (!registrationByProcess.has(row.processId)) {
+        registrationByProcess.set(
+          row.processId,
+          await vehicleProcessRepository.findVehicleRegistrationForProcess(row.processId),
+        );
+      }
+      const imageName = await uploadService.relocateToProcessFolder(
+        row.imageName,
+        registrationByProcess.get(row.processId) ?? null,
+        row.processId,
+      );
+      relocated.push({ ...row, imageName, originalKey: row.imageName });
+    }
+    return await processUploadPhotoRepository.createManyProcessUploadPhotos(
+      relocated.map(({ processId, category, imageName }) => ({ processId, category, imageName })),
+    );
+  } catch (err) {
+    // Roll every successful move back to its flat key so a retry finds the uploaded bytes.
+    await Promise.all(
+      relocated
+        .filter((r) => r.imageName !== r.originalKey)
+        .map((r) => uploadService.tryMove(r.imageName, r.originalKey)),
+    );
+    throw err;
+  }
 }
 
 /**

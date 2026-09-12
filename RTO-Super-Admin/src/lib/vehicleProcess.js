@@ -4,8 +4,17 @@
  * No React or network code here so it stays easy to reason about and reuse.
  */
 
-/** Allowed image MIME types for the backend upload + AI endpoints. */
+/** Image MIME types — the cropper, collage, and OCR (`/ai/*`) only operate on these. */
 export const IMAGE_MIME_TYPES = ['image/png', 'image/jpeg', 'image/webp']
+
+/** Full document-upload allowlist: images plus PDF. PDFs bypass crop/collage/OCR and upload as-is. */
+export const DOCUMENT_MIME_TYPES = [...IMAGE_MIME_TYPES, 'application/pdf']
+
+/** True when a File/Blob is a PDF (used to skip the image-only crop/collage/OCR steps). */
+export const isPdfFile = (file) => file?.type === 'application/pdf'
+
+/** True when a document URL points at a PDF (used by the preview modal to pick <iframe> vs <img>). */
+export const isPdfUrl = (url) => typeof url === 'string' && /\.pdf(\?|#|$)/i.test(url)
 
 /** Max upload size enforced by the backend (`PUT /upload/file/:key`). */
 export const MAX_UPLOAD_MB = 5
@@ -228,8 +237,6 @@ export function assembleStartPayload(values, uploadedPhotos = []) {
       personType: 'SELLER',
       address: (v.sellerAddress ?? '').trim() || null,
     })
-    // The purchase price pairs with the SELLER; the backend rejects it without one.
-    if (isMoney(v.purchasePrice)) payload.purchasePrice = Number(v.purchasePrice)
   }
   const buyerName = (v.buyerName ?? '').trim()
   const buyerMobile = (v.buyerMobile ?? '').trim()
@@ -240,20 +247,24 @@ export function assembleStartPayload(values, uploadedPhotos = []) {
       personType: 'BUYER',
       address: (v.buyerAddress ?? '').trim() || null,
     })
-    // The sale price pairs with the BUYER; the backend rejects it without one.
-    if (isMoney(v.salePrice)) payload.salePrice = Number(v.salePrice)
   }
   payload.persons = persons
+
+  // Prices are independent process attributes — record what was paid/received regardless of
+  // whether the seller/buyer person is captured (the backend no longer couples them).
+  if (isMoney(v.purchasePrice)) payload.purchasePrice = Number(v.purchasePrice)
+  if (isMoney(v.salePrice)) payload.salePrice = Number(v.salePrice)
 
   // Uploaded document photos — imageName is the storage fileKey, not the URL.
   payload.uploadPhotos = uploadedPhotos
     .filter((slot) => slot.status === 'uploaded' && slot.fileKey)
     .map((slot) => ({ category: slot.category, imageName: slot.fileKey }))
 
-  // Optional seller reference.
-  payload.processReferences = v.sellerReferenceId
-    ? [{ referenceId: v.sellerReferenceId, referenceType: 'SELL' }]
-    : []
+  // Separate references for the seller (SELL) and the buyer (BUY); each optional, at most one per type.
+  const processReferences = []
+  if (v.sellerReferenceId) processReferences.push({ referenceId: v.sellerReferenceId, referenceType: 'SELL' })
+  if (v.buyerReferenceId) processReferences.push({ referenceId: v.buyerReferenceId, referenceType: 'BUY' })
+  payload.processReferences = processReferences
 
   return payload
 }

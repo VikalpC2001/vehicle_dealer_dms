@@ -5,13 +5,17 @@ import {
   listAgents,
   getAgentById,
   updateAgent,
+  updateMyAgentProfile,
   deleteAgent,
 } from '../services/agent.service';
 import { createAgentWiseUserWithUser } from '../services/agent-wise-user.service';
+import { resolveAgentIdFromRequest } from '../utils/agent-scope';
+import { assertSuperAdmin } from '../utils/dealer-scope';
 import { sendSuccess } from '../utils/api-response';
 import type {
   CreateAgentBody,
   UpdateAgentBody,
+  UpdateMyAgentBody,
   AgentIdParams,
   CreateAgentWithUserBody,
 } from '../validations/agent.validation';
@@ -22,6 +26,7 @@ import type { PaginationQuery } from '../types';
  * Creates a new agent.
  */
 export async function createAgentHandler(req: Request, res: Response): Promise<void> {
+  assertSuperAdmin(req);
   const body = req.body as CreateAgentBody;
   const agent = await createAgent(body);
   sendSuccess(res, 'Agent created', agent, StatusCodes.CREATED);
@@ -33,6 +38,7 @@ export async function createAgentHandler(req: Request, res: Response): Promise<v
  * Unscoped like POST /agents — `agentId` comes from the body.
  */
 export async function createAgentWithUserHandler(req: Request, res: Response): Promise<void> {
+  assertSuperAdmin(req);
   const body = req.body as CreateAgentWithUserBody;
   const link = await createAgentWiseUserWithUser(body);
   sendSuccess(res, 'Agent user created', link, StatusCodes.CREATED);
@@ -46,6 +52,28 @@ export async function listAgentsHandler(req: Request, res: Response): Promise<vo
   const query = req.query as unknown as PaginationQuery;
   const result = await listAgents(query);
   sendSuccess(res, 'Agents retrieved', result);
+}
+
+/**
+ * GET /agents/me
+ * Returns the caller agent's own profile (resolved from the token; 4035 if not an agent).
+ */
+export async function getMyAgentHandler(req: Request, res: Response): Promise<void> {
+  const agentId = resolveAgentIdFromRequest(req);
+  const agent = await getAgentById(agentId);
+  sendSuccess(res, 'Agent profile retrieved', agent);
+}
+
+/**
+ * PATCH /agents/me
+ * The agent edits their OWN profile. `isSubscribe` is preserved (super-admin's), never taken from
+ * the body, so an agent cannot self-subscribe here.
+ */
+export async function updateMyAgentHandler(req: Request, res: Response): Promise<void> {
+  const agentId = resolveAgentIdFromRequest(req);
+  const body = req.body as UpdateMyAgentBody;
+  const agent = await updateMyAgentProfile(agentId, body);
+  sendSuccess(res, 'Profile updated', agent);
 }
 
 /**
@@ -63,6 +91,7 @@ export async function getAgentByIdHandler(req: Request, res: Response): Promise<
  * Updates an existing agent.
  */
 export async function updateAgentHandler(req: Request, res: Response): Promise<void> {
+  assertSuperAdmin(req);
   const { id } = req.params as unknown as AgentIdParams;
   const body = req.body as UpdateAgentBody;
   const agent = await updateAgent(id, body);
@@ -74,6 +103,7 @@ export async function updateAgentHandler(req: Request, res: Response): Promise<v
  * Deletes an agent.
  */
 export async function deleteAgentHandler(req: Request, res: Response): Promise<void> {
+  assertSuperAdmin(req);
   const { id } = req.params as unknown as AgentIdParams;
   await deleteAgent(id);
   sendSuccess(res, 'Agent deleted', {});

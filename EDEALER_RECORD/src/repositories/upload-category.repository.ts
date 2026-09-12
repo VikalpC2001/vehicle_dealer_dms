@@ -5,12 +5,14 @@ import type { UploadCategory } from '@prisma/client';
 export interface CreateUploadCategoryData {
   categoryName: string;
   bothSide: boolean;
+  processApi: string | null;
 }
 
 /** Fields for updating an upload category. */
 export interface UpdateUploadCategoryData {
   categoryName: string;
   bothSide: boolean;
+  processApi: string | null;
 }
 
 /**
@@ -28,6 +30,7 @@ export async function createUploadCategory(data: CreateUploadCategoryData): Prom
         categoryName: data.categoryName,
         orderRank: nextOrderRank,
         bothSide: data.bothSide,
+        processApi: data.processApi,
       },
     });
   });

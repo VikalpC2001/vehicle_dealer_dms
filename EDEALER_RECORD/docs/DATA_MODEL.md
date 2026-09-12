@@ -11,7 +11,7 @@ Distilled from [`prisma/schema.prisma`](../prisma/schema.prisma). Glossary in [D
 
 ## Tenancy rules
 
-Dealer-scoped models carry a `dealerId` and **must be filtered by it** in queries (resolve via `resolveDealerIdFromRequest`): `DealerStatus`, `DealerReference`, `DealerWiseUploadCategory`, `DealerWiseUser`, `VehicleProcess`, `ProcessReference`. ⚠️ `dealerId` is **nullable** on `DealerReference`, `VehicleProcess`, and `ProcessReference` (legacy rows) — handle nulls and use `assertDealerMatchesToken` when reading by id. `Vehicle` is **global** (shared across dealers via its unique `registrationNumber`); a vehicle's dealer association is through its `VehicleProcess` rows.
+Dealer-scoped models carry a `dealerId` and **must be filtered by it** in queries (resolve via `resolveDealerIdFromRequest`): `DealerReference`, `DealerWiseUploadCategory`, `DealerWiseUser`, `VehicleProcess`, `ProcessReference`. ⚠️ `dealerId` is **nullable** on `DealerReference`, `VehicleProcess`, and `ProcessReference` (legacy rows) — handle nulls and use `assertDealerMatchesToken` when reading by id. `Vehicle` is **global** (shared across dealers via its unique `registrationNumber`); a vehicle's dealer association is through its `VehicleProcess` rows.
 
 ---
 
@@ -28,8 +28,7 @@ Dealer-scoped models carry a `dealerId` and **must be filtered by it** in querie
 
 ## Dealers
 
-- **`Dealer`** (`dealers`) — `dealerId` PK · `firmName` · `dealerName` · `address` · `city` · `state` · `pincode` · `mobileNo` unique · `emailId` unique · `displayName` · `whatsappNo` unique · `isSubscribe` (bool, default false). Relations: `dealerStatuses`, `dealerReferences`, `vehicleProcesses`, `processReferences`, `dealerWiseUploadCategories`, `dealerWiseUsers`.
-- **`DealerStatus`** (`dealer_status`) — `statusId` PK · `dealerId` FK→Dealer (cascade) · `statusName` · `colour?` · `statusRank` · `@@unique([dealerId, statusName])`. *Per-dealer kanban statuses; rank assigned sequentially per dealer.*
+- **`Dealer`** (`dealers`) — `dealerId` PK · `firmName` · `dealerName` · `address` · `city` · `state` · `pincode` · `mobileNo` unique · `emailId` unique · `displayName` · `whatsappNo` unique · `isSubscribe` (bool, default false). Relations: `dealerReferences`, `vehicleProcesses`, `processReferences`, `dealerWiseUploadCategories`, `dealerWiseUsers`.
 - **`DealerReference`** (`dealer_references`) — `referenceId` PK · `dealerId?` FK→Dealer · `referenceName` · `referenceNumber` · → `processReferences`.
 - **`DealerWiseUser`** (`dealer_wise_user`) — `dwuId` PK · `userId` **unique** FK→User (cascade) · `dealerId` FK→Dealer (cascade) · `@@index([dealerId])`. *User↔Dealer is 1:1 (a user belongs to one dealer).*
 

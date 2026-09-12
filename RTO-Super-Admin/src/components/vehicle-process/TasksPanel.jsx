@@ -13,6 +13,7 @@ import {
 import { ConfirmModal } from '@/components/modals/ConfirmModal'
 import { TaskFormDialog, TASK_STATUSES } from './TaskFormDialog'
 import { processTaskService } from '@/services/processTaskService'
+import { dealerTaskStatusService } from '@/services/dealerTaskStatusService'
 import { dealerUserService } from '@/services/dealerUserService'
 import { getErrorMessage } from '@/lib/authErrors'
 import { formatDate } from '@/lib/utils'
@@ -38,8 +39,9 @@ function taskPatch(task, overrides) {
  *
  * @param {object} props
  * @param {string} props.processId
+ * @param {string} [props.dealerId] - Managed dealer scope when an agent edits a placeholder's process.
  */
-export function TasksPanel({ processId }) {
+export function TasksPanel({ processId, dealerId }) {
   const queryClient = useQueryClient()
   const [addOpen, setAddOpen] = useState(false)
   const [editTask, setEditTask] = useState(null)
@@ -47,14 +49,28 @@ export function TasksPanel({ processId }) {
 
   const { data: tasks = [], isLoading } = useQuery({
     queryKey: ['process-tasks', processId],
-    queryFn: () => processTaskService.getByProcess(processId),
+    queryFn: () => processTaskService.getByProcess(processId, dealerId),
     enabled: Boolean(processId),
   })
 
+  // Assignee list is the dealer's own users (dealer-scoped, token-based). It has no meaning for an
+  // agent working a placeholder dealer (which has no login users), so skip it in agent mode — tasks
+  // can still be created/edited unassigned.
   const { data: dealerUsers = [] } = useQuery({
     queryKey: ['dealer-wise-users'],
     queryFn: () => dealerUserService.getAll(),
+    enabled: !dealerId,
   })
+
+  // The dealer's task-board columns drive the status list; fall back to the standard trio.
+  const { data: taskStatuses = [] } = useQuery({
+    queryKey: ['dealer-task-statuses', dealerId],
+    queryFn: () => dealerTaskStatusService.getAll(dealerId),
+  })
+  const statusNames = useMemo(() => {
+    const names = taskStatuses.map((s) => s.statusName).filter(Boolean)
+    return names.length ? names : TASK_STATUSES
+  }, [taskStatuses])
 
   const users = useMemo(() => dealerUsers.map((d) => d.user).filter(Boolean), [dealerUsers])
   const userNameById = useMemo(() => {
@@ -68,7 +84,7 @@ export function TasksPanel({ processId }) {
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['process-tasks', processId] })
 
   const createMutation = useMutation({
-    mutationFn: (values) => processTaskService.create({ ...values, processId }),
+    mutationFn: (values) => processTaskService.create({ ...values, processId }, dealerId),
     onSuccess: () => {
       invalidate()
       toast({ title: 'Task added', variant: 'success' })
@@ -78,7 +94,7 @@ export function TasksPanel({ processId }) {
   })
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, values }) => processTaskService.update(id, values),
+    mutationFn: ({ id, values }) => processTaskService.update(id, values, dealerId),
     onSuccess: () => {
       invalidate()
       setEditTask(null)
@@ -87,7 +103,7 @@ export function TasksPanel({ processId }) {
   })
 
   const deleteMutation = useMutation({
-    mutationFn: (id) => processTaskService.remove(id),
+    mutationFn: (id) => processTaskService.remove(id, dealerId),
     onSuccess: () => {
       invalidate()
       toast({ title: 'Task deleted', variant: 'success' })
@@ -136,7 +152,10 @@ export function TasksPanel({ processId }) {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {TASK_STATUSES.map((s) => (
+                      {(task.status && !statusNames.includes(task.status)
+                        ? [task.status, ...statusNames]
+                        : statusNames
+                      ).map((s) => (
                         <SelectItem key={s} value={s}>{s}</SelectItem>
                       ))}
                     </SelectContent>
@@ -159,6 +178,7 @@ export function TasksPanel({ processId }) {
         onOpenChange={setAddOpen}
         title="Add Task"
         users={users}
+        dealerId={dealerId}
         onSubmit={(values) => createMutation.mutateAsync(values)}
         loading={createMutation.isPending}
         submitLabel="Add Task"
@@ -169,6 +189,7 @@ export function TasksPanel({ processId }) {
         onOpenChange={(open) => !open && setEditTask(null)}
         title="Edit Task"
         users={users}
+        dealerId={dealerId}
         defaultValues={
           editTask
             ? {

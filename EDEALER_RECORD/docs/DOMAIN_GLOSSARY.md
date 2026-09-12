@@ -24,7 +24,6 @@ The ubiquitous language for this codebase. When a requirement uses one of these 
 
 | Term | Meaning | Model |
 |------|---------|-------|
-| **Dealer Status** | A dealer-defined kanban/workflow status label (name, colour, rank). Dealers create their own statuses. | `DealerStatus` |
 | **Dealer Reference** | A dealer-defined reference person/number (who introduced a buy or sell). | `DealerReference` |
 | **Process Reference** | Links a process to a dealer reference, typed `BUY` or `SELL` (`ReferenceType`). | `ProcessReference` |
 

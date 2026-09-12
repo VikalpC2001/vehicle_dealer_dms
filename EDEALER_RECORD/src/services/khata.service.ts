@@ -11,6 +11,8 @@ interface ResolvedPair {
   dealerId: string;
   agentId: string;
   sourceDealerId: string | null;
+  /** True when the write is authorized by placeholder ownership (no DealerAgent grant needed). */
+  authorizedByOwnership: boolean;
 }
 
 const roleFor = (persona: LedgerPersona): RoleType => (persona === 'agent' ? 'AGENT' : 'DEALER');
@@ -88,8 +90,12 @@ function toEntryDto(e: LedgerEntry): Record<string, unknown> {
 
 /**
  * Resolves the (real-dealer, agent) pair for a WRITE from the caller persona + counterparty id.
- * For an agent posting against a placeholder dealer, resolves to the connected real dealer
- * (4057 if not connected) and records the placeholder id as provenance.
+ * For an agent posting against a placeholder dealer:
+ * - **connected** placeholder → route to the connected real dealer (grant-authorized), recording
+ *   the placeholder id as provenance;
+ * - **unconnected placeholder the agent owns** → book to the placeholder's OWN account (an
+ *   independent ledger), authorized by ownership (no grant needed);
+ * - unconnected placeholder the agent does not own → 4057 (connect first).
  */
 async function resolveWritePair(
   persona: LedgerPersona,
@@ -98,7 +104,7 @@ async function resolveWritePair(
 ): Promise<ResolvedPair> {
   if (persona === 'dealer') {
     // The caller's own dealer is a real dealer; the counterparty is the agent.
-    return { dealerId: selfId, agentId: counterpartyId, sourceDealerId: null };
+    return { dealerId: selfId, agentId: counterpartyId, sourceDealerId: null, authorizedByOwnership: false };
   }
   // Agent caller: counterparty is a dealer that may be a placeholder.
   const dealer = await khataRepository.findDealerForResolution(counterpartyId);
@@ -106,16 +112,31 @@ async function resolveWritePair(
     throw new AppError('Dealer not found', StatusCodes.NOT_FOUND, 4040);
   }
   if (dealer.isPlaceholder) {
-    if (!dealer.connectedDealerId) {
-      throw new AppError(
-        'Connect this placeholder to a real dealer before posting to the khata',
-        StatusCodes.UNPROCESSABLE_ENTITY,
-        4057,
-      );
+    if (dealer.connectedDealerId) {
+      return {
+        dealerId: dealer.connectedDealerId,
+        agentId: selfId,
+        sourceDealerId: dealer.dealerId,
+        authorizedByOwnership: false,
+      };
     }
-    return { dealerId: dealer.connectedDealerId, agentId: selfId, sourceDealerId: dealer.dealerId };
+    if (dealer.ownerAgentId === selfId) {
+      // Independent placeholder ledger — booked to the placeholder itself, owner-authorized.
+      return { dealerId: dealer.dealerId, agentId: selfId, sourceDealerId: null, authorizedByOwnership: true };
+    }
+    throw new AppError(
+      'Connect this placeholder to a real dealer before posting to the khata',
+      StatusCodes.UNPROCESSABLE_ENTITY,
+      4057,
+    );
   }
-  return { dealerId: counterpartyId, agentId: selfId, sourceDealerId: null };
+  return { dealerId: counterpartyId, agentId: selfId, sourceDealerId: null, authorizedByOwnership: false };
+}
+
+/** True when `dealerId` is a placeholder the agent owns (independent-ledger authorization). */
+async function isAgentOwnedPlaceholder(dealerId: string, agentId: string): Promise<boolean> {
+  const dealer = await khataRepository.findDealerForResolution(dealerId);
+  return !!(dealer?.isPlaceholder && dealer.ownerAgentId === agentId);
 }
 
 /** Asserts a live (ACTIVE) dealer↔agent grant exists; ledger WRITES require it (4054). */
@@ -176,7 +197,9 @@ export async function postEntry(
   body: { counterpartyId: string; direction: 'CREDIT' | 'DEBIT'; amount: number; description?: string; assignmentId?: string },
 ): Promise<{ account: Record<string, unknown>; entry: Record<string, unknown> }> {
   const pair = await resolveWritePair(persona, selfId, body.counterpartyId);
-  await assertActivePairGrant(pair.dealerId, pair.agentId);
+  if (!pair.authorizedByOwnership) {
+    await assertActivePairGrant(pair.dealerId, pair.agentId);
+  }
   const { account, entry } = await khataRepository
     .postEntry({
       dealerId: pair.dealerId,
@@ -215,7 +238,12 @@ export async function reverseEntry(
   if (original.isReversed) {
     throw new AppError('Entry already reversed', StatusCodes.CONFLICT, 4055);
   }
-  await assertActivePairGrant(original.dealerId, original.agentId);
+  // An entry on a placeholder the agent owns is authorized by ownership (no grant to require).
+  const ownerAuthorized =
+    persona === 'agent' && (await isAgentOwnedPlaceholder(original.dealerId, selfId));
+  if (!ownerAuthorized) {
+    await assertActivePairGrant(original.dealerId, original.agentId);
+  }
   const { account, reversal } = await khataRepository
     .reverseEntry(entryId, postedByUserId, roleFor(persona))
     .catch(mapRepoError);
@@ -231,7 +259,9 @@ export async function settle(
   requestedAmount: number | null,
 ): Promise<{ account: Record<string, unknown>; entry: Record<string, unknown> }> {
   const pair = await resolveWritePair(persona, selfId, counterpartyId);
-  await assertActivePairGrant(pair.dealerId, pair.agentId);
+  if (!pair.authorizedByOwnership) {
+    await assertActivePairGrant(pair.dealerId, pair.agentId);
+  }
   const { account, entry } = await khataRepository
     .settleAccount(pair.dealerId, pair.agentId, requestedAmount, postedByUserId, roleFor(persona))
     .catch(mapRepoError);

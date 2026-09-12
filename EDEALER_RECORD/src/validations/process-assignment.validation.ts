@@ -1,15 +1,56 @@
 import { z } from 'zod';
 
 /**
+ * Money amount for an agent cost: positive, at most 2 decimals, within Decimal(14,2). Mirrors the
+ * khata `amountField` so an assignment cost validates identically to a manual ledger entry.
+ */
+const costAmountField = z.coerce
+  .number()
+  .positive('Amount must be greater than zero')
+  .max(999_999_999_999.99, 'Amount is too large')
+  .refine(
+    (v) => Number.isFinite(v) && /^\d+(\.\d{1,2})?$/.test(v.toString()),
+    'At most 2 decimal places',
+  );
+
+/**
  * POST /process-assignments
- * Assigns a vehicle process + chosen RTO service to an agent the dealer has granted access to.
+ * Assigns a vehicle process + one or more chosen RTO services to an agent the dealer has granted
+ * access to — one assignment row is created per service. An optional `cost` records money the dealer
+ * owes the agent for the job in the khata ledger (posted atomically), applied **per service**;
+ * `costDate` sets the ledger entry's book date, `costNote` its description. Services already actively
+ * assigned to that agent for the process are skipped.
  */
 export const createAssignmentSchema = z.object({
   body: z.object({
     processId: z.string().uuid('Invalid process ID'),
     agentId: z.string().uuid('Invalid agent ID'),
-    serviceId: z.string().uuid('Invalid service ID'),
+    serviceIds: z
+      .array(z.string().uuid('Invalid service ID'))
+      .min(1, 'Select at least one service')
+      .max(50, 'Too many services'),
     note: z.string().max(2000, 'Note is too long').optional(),
+    cost: costAmountField.optional(),
+    costDate: z.coerce.date().optional(),
+    costNote: z.string().max(2000, 'Note is too long').optional(),
+  }),
+});
+
+/**
+ * PATCH /process-assignments/:id/cost
+ * Sets/changes/removes the agent cost recorded in the ledger for an assignment.
+ * `cost`: a positive number to set the amount, `null` to remove the cost, omitted to keep it
+ * (edit only the date/note). Editing the amount posts a ledger reversal + new entry; editing only
+ * the date/note updates the entry in place.
+ */
+export const updateAssignmentCostSchema = z.object({
+  params: z.object({
+    id: z.string().uuid('Invalid assignment ID'),
+  }),
+  body: z.object({
+    cost: costAmountField.nullable().optional(),
+    costDate: z.coerce.date().optional(),
+    costNote: z.string().max(2000, 'Note is too long').optional(),
   }),
 });
 
@@ -57,6 +98,8 @@ export const updateAgentStatusSchema = z.object({
 });
 
 export type CreateAssignmentBody = z.infer<typeof createAssignmentSchema>['body'];
+export type UpdateAssignmentCostParams = z.infer<typeof updateAssignmentCostSchema>['params'];
+export type UpdateAssignmentCostBody = z.infer<typeof updateAssignmentCostSchema>['body'];
 export type ListAssignmentsQuery = z.infer<typeof listAssignmentsQuerySchema>['query'];
 export type AssignmentIdParams = z.infer<typeof assignmentIdParamsSchema>['params'];
 export type AgentAssignmentsQuery = z.infer<typeof agentAssignmentsQuerySchema>['query'];

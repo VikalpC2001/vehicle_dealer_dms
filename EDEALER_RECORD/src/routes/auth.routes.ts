@@ -5,6 +5,7 @@ import { authenticate, authenticatePasswordReset } from '../middlewares/auth.mid
 import {
   register,
   login,
+  me,
   refreshAccessToken,
   verifyOtp,
   resendOtp,
@@ -44,6 +45,9 @@ router.post(
   validate(loginBodySchema),
   asyncHandler(login),
 );
+
+/** Current user with fresh approval state (pending screen polls this). Allowed even when unapproved. */
+router.get('/me', authenticate, asyncHandler(me));
 
 /** Refresh: exchange a valid refresh token for a new access token (+ rotated refresh token) */
 router.post(

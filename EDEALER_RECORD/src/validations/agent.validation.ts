@@ -36,6 +36,11 @@ export const getAgentByIdSchema = z.object({
   }),
 });
 
+/** PATCH /agents/me — the agent edits their own profile (no `isSubscribe`, no id param). */
+export const updateMyAgentSchema = z.object({
+  body: z.object(agentBodyFields),
+});
+
 /** Create a verified owner/staff user and link them to an agent (super-admin onboarding flow). */
 export const createAgentWithUserSchema = z.object({
   body: z.object({
@@ -56,5 +61,6 @@ export const listAgentsSchema = z.object({
 
 export type CreateAgentBody = z.infer<typeof createAgentSchema>['body'];
 export type UpdateAgentBody = z.infer<typeof updateAgentSchema>['body'];
+export type UpdateMyAgentBody = z.infer<typeof updateMyAgentSchema>['body'];
 export type AgentIdParams = z.infer<typeof getAgentByIdSchema>['params'];
 export type CreateAgentWithUserBody = z.infer<typeof createAgentWithUserSchema>['body'];

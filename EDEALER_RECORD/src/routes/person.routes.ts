@@ -8,6 +8,7 @@ import {
   getPersonByIdHandler,
   updatePersonHandler,
   deletePersonHandler,
+  changeBuyerHandler,
 } from '../controllers/person.controller';
 import {
   createPersonSchema,
@@ -15,6 +16,7 @@ import {
   getPersonByIdSchema,
   updatePersonSchema,
   deletePersonSchema,
+  changeBuyerSchema,
 } from '../validations/person.validation';
 
 const router = Router();
@@ -23,6 +25,8 @@ router.use(authenticate);
 
 router.get('/', validate(listPersonsSchema), asyncHandler(listPersonsHandler));
 router.post('/', validate(createPersonSchema), asyncHandler(createPersonHandler));
+// Literal path — before `/:id` so "change-buyer" isn't captured as a person id.
+router.post('/change-buyer', validate(changeBuyerSchema), asyncHandler(changeBuyerHandler));
 router.get('/:id', validate(getPersonByIdSchema), asyncHandler(getPersonByIdHandler));
 router.patch('/:id', validate(updatePersonSchema), asyncHandler(updatePersonHandler));
 router.delete('/:id', validate(deletePersonSchema), asyncHandler(deletePersonHandler));

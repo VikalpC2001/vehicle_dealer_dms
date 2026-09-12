@@ -9,6 +9,7 @@ import {
   updateOrderRanks,
 } from '../services/rto-service.service';
 import { sendSuccess } from '../utils/api-response';
+import { assertSuperAdmin } from '../utils/dealer-scope';
 import type {
   CreateRtoServiceBody,
   UpdateRtoServiceBody,
@@ -22,6 +23,7 @@ import type { PaginationQuery } from '../types';
  * Creates a new RTO service.
  */
 export async function createRtoServiceHandler(req: Request, res: Response): Promise<void> {
+  assertSuperAdmin(req);
   const body = req.body as CreateRtoServiceBody;
   const service = await createRtoService(body);
   sendSuccess(res, 'RTO service created', service, StatusCodes.CREATED);
@@ -52,6 +54,7 @@ export async function getRtoServiceByIdHandler(req: Request, res: Response): Pro
  * Updates an existing RTO service.
  */
 export async function updateRtoServiceHandler(req: Request, res: Response): Promise<void> {
+  assertSuperAdmin(req);
   const { id } = req.params as unknown as RtoServiceIdParams;
   const body = req.body as UpdateRtoServiceBody;
   const service = await updateRtoService(id, body);
@@ -63,6 +66,7 @@ export async function updateRtoServiceHandler(req: Request, res: Response): Prom
  * Deletes an RTO service.
  */
 export async function deleteRtoServiceHandler(req: Request, res: Response): Promise<void> {
+  assertSuperAdmin(req);
   const { id } = req.params as unknown as RtoServiceIdParams;
   await deleteRtoService(id);
   sendSuccess(res, 'RTO service deleted', {});
@@ -73,6 +77,7 @@ export async function deleteRtoServiceHandler(req: Request, res: Response): Prom
  * Updates orderRank for multiple RTO services. Body is an array of { serviceId, orderRank } (serviceName/shortName optional).
  */
 export async function updateOrderRanksHandler(req: Request, res: Response): Promise<void> {
+  assertSuperAdmin(req);
   const body = req.body as UpdateOrderRanksBody;
   const services = await updateOrderRanks(body);
   sendSuccess(res, 'Order ranks updated', services);

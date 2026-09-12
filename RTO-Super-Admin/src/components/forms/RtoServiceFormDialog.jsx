@@ -1,0 +1,36 @@
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { RtoServiceForm } from '@/components/forms/RtoServiceForm'
+
+export function RtoServiceFormDialog({
+  open,
+  onOpenChange,
+  title,
+  description,
+  defaultValues,
+  onSubmit,
+  loading,
+  submitLabel,
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+          {description && <DialogDescription>{description}</DialogDescription>}
+        </DialogHeader>
+        <RtoServiceForm
+          defaultValues={defaultValues}
+          onSubmit={onSubmit}
+          loading={loading}
+          submitLabel={submitLabel}
+        />
+      </DialogContent>
+    </Dialog>
+  )
+}

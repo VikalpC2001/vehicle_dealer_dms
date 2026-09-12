@@ -1,4 +1,11 @@
 /**
+ * Returns the numeric app error `code` from an API error envelope (e.g. 4031, 4091), or null.
+ */
+export function getErrorCode(error) {
+  return error?.response?.data?.code ?? null
+}
+
+/**
  * Extracts a human-readable message from API error envelopes.
  */
 export function getErrorMessage(error, fallback = 'Something went wrong. Please try again.') {

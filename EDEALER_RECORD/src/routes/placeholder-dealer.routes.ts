@@ -8,6 +8,7 @@ import {
   updatePlaceholderHandler,
   deletePlaceholderHandler,
   connectPlaceholderHandler,
+  connectPlaceholderAsAdminHandler,
   disconnectPlaceholderHandler,
 } from '../controllers/placeholder-dealer.controller';
 import {
@@ -46,11 +47,18 @@ router.delete(
   asyncHandler(deletePlaceholderHandler),
 );
 
-// Connect a placeholder dealer to a real subscribed dealer
+// Connect a placeholder dealer to a real subscribed dealer (agent, owned)
 router.post(
   '/:id/connect',
   validate(connectSchema),
   asyncHandler(connectPlaceholderHandler),
+);
+
+// Super-admin: connect any agent's placeholder to a real subscribed dealer
+router.post(
+  '/:id/connect-admin',
+  validate(connectSchema),
+  asyncHandler(connectPlaceholderAsAdminHandler),
 );
 
 // Disconnect a placeholder dealer from its real dealer

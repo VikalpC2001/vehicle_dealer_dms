@@ -5,6 +5,7 @@ import type {
   KhataAccount,
   LedgerEntry,
   LedgerDirection,
+  Prisma,
   RoleType,
 } from '@prisma/client';
 
@@ -55,12 +56,14 @@ export interface PostEntryData {
   postedByRole: RoleType;
   assignmentId?: string | null;
   sourceDealerId?: string | null;
+  /** Effective date shown in the book. Omit to default to now (schema default). */
+  entryDate?: Date | null;
 }
 
-/** Minimal fields used to resolve a placeholder dealer to its connected real dealer. */
+/** Minimal fields used to resolve a placeholder dealer (to its connected real dealer or its owner). */
 export type DealerResolution = Pick<
   Dealer,
-  'dealerId' | 'isPlaceholder' | 'connectedDealerId' | 'isSubscribe'
+  'dealerId' | 'isPlaceholder' | 'connectedDealerId' | 'isSubscribe' | 'ownerAgentId'
 >;
 
 /**
@@ -78,7 +81,13 @@ export async function findActiveGrant(
 export async function findDealerForResolution(dealerId: string): Promise<DealerResolution | null> {
   return prisma.dealer.findUnique({
     where: { dealerId },
-    select: { dealerId: true, isPlaceholder: true, connectedDealerId: true, isSubscribe: true },
+    select: {
+      dealerId: true,
+      isPlaceholder: true,
+      connectedDealerId: true,
+      isSubscribe: true,
+      ownerAgentId: true,
+    },
   });
 }
 
@@ -149,101 +158,251 @@ export async function findEntryById(ledgerEntryId: string): Promise<LedgerEntry 
 }
 
 /**
- * Posts one entry inside a transaction. Concurrency-safe: the balance is changed by an ATOMIC
- * row-locked `update({ increment })`, and the returned balance is snapshotted as `balanceAfter`
- * (no read-then-write race). The account is lazily created on first post.
+ * Posts one entry on a caller-supplied transaction client, so it can compose into a larger
+ * transaction (e.g. an assignment-create that also records an agent cost). Concurrency-safe: the
+ * balance is changed by an ATOMIC row-locked `update({ increment })`, and the returned balance is
+ * snapshotted as `balanceAfter`. The account is lazily created on first post. `entryDate` (when
+ * given) sets the book-facing date; otherwise the schema default (now) applies.
+ */
+export async function postEntryOnTx(
+  tx: Prisma.TransactionClient,
+  data: PostEntryData,
+): Promise<{ account: KhataAccount; entry: LedgerEntry }> {
+  const delta = data.direction === 'CREDIT' ? data.amount : -data.amount;
+  await tx.khataAccount.upsert({
+    where: { dealerId_agentId: { dealerId: data.dealerId, agentId: data.agentId } },
+    create: { dealerId: data.dealerId, agentId: data.agentId },
+    update: {},
+  });
+  const account = await tx.khataAccount.update({
+    where: { dealerId_agentId: { dealerId: data.dealerId, agentId: data.agentId } },
+    data: {
+      balance: { increment: delta },
+      totalCredit: { increment: data.direction === 'CREDIT' ? data.amount : 0 },
+      totalDebit: { increment: data.direction === 'DEBIT' ? data.amount : 0 },
+    },
+  });
+  const entry = await tx.ledgerEntry.create({
+    data: {
+      khataAccountId: account.khataAccountId,
+      dealerId: data.dealerId,
+      agentId: data.agentId,
+      direction: data.direction,
+      amount: data.amount,
+      balanceAfter: account.balance,
+      description: data.description ?? null,
+      ...(data.entryDate ? { entryDate: data.entryDate } : {}),
+      postedByUserId: data.postedByUserId ?? null,
+      postedByRole: data.postedByRole,
+      assignmentId: data.assignmentId ?? null,
+      sourceDealerId: data.sourceDealerId ?? null,
+    },
+  });
+  return { account, entry };
+}
+
+/**
+ * Posts one entry inside its own transaction (the standalone ledger-write path). Delegates to
+ * {@link postEntryOnTx}.
  */
 export async function postEntry(
   data: PostEntryData,
 ): Promise<{ account: KhataAccount; entry: LedgerEntry }> {
-  const delta = data.direction === 'CREDIT' ? data.amount : -data.amount;
-  return prisma.$transaction(async (tx) => {
-    await tx.khataAccount.upsert({
-      where: { dealerId_agentId: { dealerId: data.dealerId, agentId: data.agentId } },
-      create: { dealerId: data.dealerId, agentId: data.agentId },
-      update: {},
-    });
-    const account = await tx.khataAccount.update({
-      where: { dealerId_agentId: { dealerId: data.dealerId, agentId: data.agentId } },
-      data: {
-        balance: { increment: delta },
-        totalCredit: { increment: data.direction === 'CREDIT' ? data.amount : 0 },
-        totalDebit: { increment: data.direction === 'DEBIT' ? data.amount : 0 },
-      },
-    });
-    const entry = await tx.ledgerEntry.create({
-      data: {
-        khataAccountId: account.khataAccountId,
-        dealerId: data.dealerId,
-        agentId: data.agentId,
-        direction: data.direction,
-        amount: data.amount,
-        balanceAfter: account.balance,
-        description: data.description ?? null,
-        postedByUserId: data.postedByUserId ?? null,
-        postedByRole: data.postedByRole,
-        assignmentId: data.assignmentId ?? null,
-        sourceDealerId: data.sourceDealerId ?? null,
-      },
-    });
-    return { account, entry };
-  });
+  return prisma.$transaction((tx) => postEntryOnTx(tx, data));
 }
 
 /**
- * Reverses an entry: posts an opposite-direction REVERSAL entry, stamps the original
- * `isReversed = true`, and adjusts the balance — all atomically. Re-checks the guards inside the
- * transaction. Throws plain errors with a `code` the service maps to AppError.
+ * Reverses an entry on a caller-supplied transaction client (composes into a larger transaction).
+ * Posts an opposite-direction REVERSAL entry, stamps the original `isReversed = true`, and adjusts
+ * the balance. Re-checks the guards inside the transaction. Throws plain errors with a `code` the
+ * service maps to AppError.
+ */
+export async function reverseEntryOnTx(
+  tx: Prisma.TransactionClient,
+  originalId: string,
+  postedByUserId: string | null,
+  postedByRole: RoleType,
+): Promise<{ account: KhataAccount; reversal: LedgerEntry }> {
+  const orig = await tx.ledgerEntry.findUnique({ where: { ledgerEntryId: originalId } });
+  if (!orig) throw Object.assign(new Error('Entry not found'), { code: 4040 });
+  if (orig.reversesEntryId) throw Object.assign(new Error('Cannot reverse a reversal'), { code: 4056 });
+  if (orig.isReversed) throw Object.assign(new Error('Entry already reversed'), { code: 4055 });
+
+  const oppDirection: LedgerDirection = orig.direction === 'CREDIT' ? 'DEBIT' : 'CREDIT';
+  const amountNum = orig.amount.toNumber();
+  const delta = oppDirection === 'CREDIT' ? amountNum : -amountNum;
+
+  const account = await tx.khataAccount.update({
+    where: { khataAccountId: orig.khataAccountId },
+    data: {
+      balance: { increment: delta },
+      totalCredit: { increment: oppDirection === 'CREDIT' ? amountNum : 0 },
+      totalDebit: { increment: oppDirection === 'DEBIT' ? amountNum : 0 },
+    },
+  });
+  const reversal = await tx.ledgerEntry.create({
+    data: {
+      khataAccountId: orig.khataAccountId,
+      dealerId: orig.dealerId,
+      agentId: orig.agentId,
+      direction: oppDirection,
+      amount: orig.amount,
+      balanceAfter: account.balance,
+      description: `Reversal of entry ${orig.ledgerEntryId}`,
+      postedByUserId,
+      postedByRole,
+      reversesEntryId: orig.ledgerEntryId,
+    },
+  });
+  await tx.ledgerEntry.update({
+    where: { ledgerEntryId: orig.ledgerEntryId },
+    data: { isReversed: true },
+  });
+  return { account, reversal };
+}
+
+/**
+ * Reverses an entry inside its own transaction (the standalone reverse path). Delegates to
+ * {@link reverseEntryOnTx}.
  */
 export async function reverseEntry(
   originalId: string,
   postedByUserId: string | null,
   postedByRole: RoleType,
 ): Promise<{ account: KhataAccount; reversal: LedgerEntry }> {
-  return prisma.$transaction(async (tx) => {
-    const orig = await tx.ledgerEntry.findUnique({ where: { ledgerEntryId: originalId } });
-    if (!orig) throw Object.assign(new Error('Entry not found'), { code: 4040 });
-    if (orig.reversesEntryId) throw Object.assign(new Error('Cannot reverse a reversal'), { code: 4056 });
-    if (orig.isReversed) throw Object.assign(new Error('Entry already reversed'), { code: 4055 });
+  return prisma.$transaction((tx) => reverseEntryOnTx(tx, originalId, postedByUserId, postedByRole));
+}
 
-    const oppDirection: LedgerDirection = orig.direction === 'CREDIT' ? 'DEBIT' : 'CREDIT';
-    const amountNum = orig.amount.toNumber();
-    const delta = oppDirection === 'CREDIT' ? amountNum : -amountNum;
-
-    const account = await tx.khataAccount.update({
-      where: { khataAccountId: orig.khataAccountId },
-      data: {
-        balance: { increment: delta },
-        totalCredit: { increment: oppDirection === 'CREDIT' ? amountNum : 0 },
-        totalDebit: { increment: oppDirection === 'DEBIT' ? amountNum : 0 },
-      },
-    });
-    const reversal = await tx.ledgerEntry.create({
-      data: {
-        khataAccountId: orig.khataAccountId,
-        dealerId: orig.dealerId,
-        agentId: orig.agentId,
-        direction: oppDirection,
-        amount: orig.amount,
-        balanceAfter: account.balance,
-        description: `Reversal of entry ${orig.ledgerEntryId}`,
-        postedByUserId,
-        postedByRole,
-        reversesEntryId: orig.ledgerEntryId,
-      },
-    });
-    await tx.ledgerEntry.update({
-      where: { ledgerEntryId: orig.ledgerEntryId },
-      data: { isReversed: true },
-    });
-    return { account, reversal };
+/**
+ * Finds the single live "agent cost" entry a dealer posted for an assignment: a `CREDIT` linked to
+ * the assignment that is neither reversed nor itself a reversal. Returns null when there is none.
+ * The `OnTx` variant composes into a larger transaction (assignment create / cost edit).
+ */
+export async function findActiveAssignmentCostEntryOnTx(
+  tx: Prisma.TransactionClient,
+  assignmentId: string,
+): Promise<LedgerEntry | null> {
+  return tx.ledgerEntry.findFirst({
+    where: {
+      assignmentId,
+      direction: 'CREDIT',
+      isReversed: false,
+      reversesEntryId: null,
+    },
+    orderBy: { seq: 'desc' },
   });
+}
+
+export async function findActiveAssignmentCostEntry(
+  assignmentId: string,
+): Promise<LedgerEntry | null> {
+  return findActiveAssignmentCostEntryOnTx(prisma, assignmentId);
+}
+
+/**
+ * Batch variant of {@link findActiveAssignmentCostEntry} for list enrichment: the live cost entry
+ * per assignment id. Returns a map keyed by `assignmentId`.
+ */
+export async function listActiveCostEntriesForAssignments(
+  assignmentIds: string[],
+): Promise<Map<string, LedgerEntry>> {
+  if (assignmentIds.length === 0) return new Map();
+  const rows = await prisma.ledgerEntry.findMany({
+    where: {
+      assignmentId: { in: assignmentIds },
+      direction: 'CREDIT',
+      isReversed: false,
+      reversesEntryId: null,
+    },
+    orderBy: { seq: 'desc' },
+  });
+  const map = new Map<string, LedgerEntry>();
+  for (const row of rows) {
+    if (row.assignmentId && !map.has(row.assignmentId)) map.set(row.assignmentId, row);
+  }
+  return map;
+}
+
+/**
+ * In-place metadata update for a ledger entry that does NOT touch the amount (safe for the
+ * running `balanceAfter` snapshots): the book-facing `entryDate` and/or `description`. Used when a
+ * dealer edits only the date/note of an assignment cost. Runs on the caller's transaction.
+ */
+export async function updateEntryMetaOnTx(
+  tx: Prisma.TransactionClient,
+  ledgerEntryId: string,
+  meta: { entryDate?: Date; description?: string | null },
+): Promise<LedgerEntry> {
+  return tx.ledgerEntry.update({
+    where: { ledgerEntryId },
+    data: {
+      ...(meta.entryDate ? { entryDate: meta.entryDate } : {}),
+      ...(meta.description !== undefined ? { description: meta.description } : {}),
+    },
+  });
+}
+
+/**
+ * Settle logic on a caller-supplied transaction client, so it can compose into a larger
+ * transaction (e.g. the agent-switch flow) instead of opening its own. Posts a balancing entry
+ * sized from the CURRENT balance (read inside the passed tx). Optional `requestedAmount` caps a
+ * partial settlement; `note` overrides the entry description. Throws `{ code: 4058 }` when the
+ * balance is already zero.
+ */
+export async function settleAccountOnTx(
+  tx: Prisma.TransactionClient,
+  params: {
+    dealerId: string;
+    agentId: string;
+    requestedAmount: number | null;
+    postedByUserId: string | null;
+    postedByRole: RoleType;
+    note?: string;
+  },
+): Promise<{ account: KhataAccount; entry: LedgerEntry }> {
+  const { dealerId, agentId, requestedAmount, postedByUserId, postedByRole, note } = params;
+  const existing = await tx.khataAccount.findUnique({
+    where: { dealerId_agentId: { dealerId, agentId } },
+  });
+  if (!existing) throw Object.assign(new Error('No khata account to settle'), { code: 4040 });
+  const balNum = existing.balance.toNumber();
+  if (balNum === 0) throw Object.assign(new Error('Account is already settled'), { code: 4058 });
+
+  const magnitude = Math.abs(balNum);
+  const settleAmount = requestedAmount != null ? Math.min(requestedAmount, magnitude) : magnitude;
+  // Reduce the balance toward zero: a positive balance (dealer owes agent) needs a DEBIT.
+  const direction: LedgerDirection = balNum > 0 ? 'DEBIT' : 'CREDIT';
+  const delta = direction === 'CREDIT' ? settleAmount : -settleAmount;
+
+  const account = await tx.khataAccount.update({
+    where: { khataAccountId: existing.khataAccountId },
+    data: {
+      balance: { increment: delta },
+      totalCredit: { increment: direction === 'CREDIT' ? settleAmount : 0 },
+      totalDebit: { increment: direction === 'DEBIT' ? settleAmount : 0 },
+    },
+  });
+  const entry = await tx.ledgerEntry.create({
+    data: {
+      khataAccountId: existing.khataAccountId,
+      dealerId,
+      agentId,
+      direction,
+      amount: settleAmount,
+      balanceAfter: account.balance,
+      description: note ?? 'Settlement',
+      postedByUserId,
+      postedByRole,
+    },
+  });
+  return { account, entry };
 }
 
 /**
  * Settles an account by posting a balancing entry sized from the CURRENT balance, read inside the
  * locked transaction so concurrent posts cannot desync the settle amount. Optional `requestedAmount`
- * caps a partial settlement. Throws `{ code: 4058 }` when the balance is already zero.
+ * caps a partial settlement; optional `note` overrides the entry description. Throws `{ code: 4058 }`
+ * when the balance is already zero.
  */
 export async function settleAccount(
   dealerId: string,
@@ -251,43 +410,16 @@ export async function settleAccount(
   requestedAmount: number | null,
   postedByUserId: string | null,
   postedByRole: RoleType,
+  note?: string,
 ): Promise<{ account: KhataAccount; entry: LedgerEntry }> {
-  return prisma.$transaction(async (tx) => {
-    const existing = await tx.khataAccount.findUnique({
-      where: { dealerId_agentId: { dealerId, agentId } },
-    });
-    if (!existing) throw Object.assign(new Error('No khata account to settle'), { code: 4040 });
-    const balNum = existing.balance.toNumber();
-    if (balNum === 0) throw Object.assign(new Error('Account is already settled'), { code: 4058 });
-
-    const magnitude = Math.abs(balNum);
-    const settleAmount =
-      requestedAmount != null ? Math.min(requestedAmount, magnitude) : magnitude;
-    // Reduce the balance toward zero: a positive balance (dealer owes agent) needs a DEBIT.
-    const direction: LedgerDirection = balNum > 0 ? 'DEBIT' : 'CREDIT';
-    const delta = direction === 'CREDIT' ? settleAmount : -settleAmount;
-
-    const account = await tx.khataAccount.update({
-      where: { khataAccountId: existing.khataAccountId },
-      data: {
-        balance: { increment: delta },
-        totalCredit: { increment: direction === 'CREDIT' ? settleAmount : 0 },
-        totalDebit: { increment: direction === 'DEBIT' ? settleAmount : 0 },
-      },
-    });
-    const entry = await tx.ledgerEntry.create({
-      data: {
-        khataAccountId: existing.khataAccountId,
-        dealerId,
-        agentId,
-        direction,
-        amount: settleAmount,
-        balanceAfter: account.balance,
-        description: 'Settlement',
-        postedByUserId,
-        postedByRole,
-      },
-    });
-    return { account, entry };
-  });
+  return prisma.$transaction((tx) =>
+    settleAccountOnTx(tx, {
+      dealerId,
+      agentId,
+      requestedAmount,
+      postedByUserId,
+      postedByRole,
+      note,
+    }),
+  );
 }

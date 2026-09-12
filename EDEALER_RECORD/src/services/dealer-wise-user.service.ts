@@ -21,6 +21,13 @@ export interface CreateDealerWiseUserWithUserInput {
   emailId: string;
   mobileNo: string;
   password: string;
+  /** Defaults true (admin-created logins skip OTP). Self-registration passes false → verify via OTP. */
+  emailVerified?: boolean;
+  /**
+   * Marks this link as the dealership OWNER (full access, manages roles). Only the registration flow
+   * passes true; employees created through the normal endpoint stay false (read-only default).
+   */
+  isOwner?: boolean;
 }
 
 /**
@@ -100,7 +107,7 @@ export async function createDealerWiseUserWithUser(
     userName: input.userName,
     mobileNo: input.mobileNo,
     gender: null,
-    emailVerified: true,
+    emailVerified: input.emailVerified ?? true,
   });
   const existingLink = await dealerWiseUserRepository.findDealerWiseUserByUserId(user.userId);
   if (existingLink) {
@@ -109,6 +116,7 @@ export async function createDealerWiseUserWithUser(
   return dealerWiseUserRepository.createDealerWiseUser({
     dealerId: input.dealerId,
     userId: user.userId,
+    isOwner: input.isOwner ?? false,
   });
 }
 
@@ -160,4 +168,13 @@ export async function deleteDealerWiseUser(dwuId: string): Promise<void> {
  */
 export async function getPrimaryDealerIdForUser(userId: string): Promise<string | null> {
   return dealerWiseUserRepository.findFirstDealerIdByUserId(userId);
+}
+
+/**
+ * Returns whether the user's dealer link is the dealership OWNER. False when the user is not linked
+ * to a dealer (agents, unlinked signups, super-admins).
+ */
+export async function isDealerOwnerUser(userId: string): Promise<boolean> {
+  const auth = await dealerWiseUserRepository.findDealerWiseUserAuthByUserId(userId);
+  return auth?.isOwner ?? false;
 }

@@ -51,6 +51,16 @@ export async function findUserByEmail(email: string): Promise<User | null> {
 }
 
 /**
+ * Deletes a user (cascades their dealer/agent link rows). Used to discard an abandoned, unverified
+ * self-registration so the same email can be re-registered.
+ *
+ * @param userId - Primary key.
+ */
+export async function deleteUser(userId: string): Promise<User> {
+  return prisma.user.delete({ where: { userId } });
+}
+
+/**
  * Finds a user by ID. Returns null if not found.
  */
 export async function findUserById(userId: string): Promise<User | null> {
