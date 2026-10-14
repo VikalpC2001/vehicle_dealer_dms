@@ -2,13 +2,20 @@ import type { Request, Response, NextFunction, RequestHandler } from 'express';
 import { StatusCodes } from 'http-status-codes';
 import { verifyToken } from '../utils/jwt';
 import { AppError } from '../utils/app-error';
-import type { Role } from '../types';
+import { buildFirmAccessPausedError, isFirmAccessPaused } from '../services/firm-access.service';
+import type { JwtPayload, Role } from '../types';
 
 /**
  * Middleware that verifies the Bearer token in the `Authorization` header
  * and attaches the decoded JWT payload to `req.user`.
  *
+ * For a token linked to a dealer/agent firm it also checks — live, not from a JWT claim — that the
+ * firm's access is not paused by the super-admin, so a pause takes effect on the user's very next
+ * request. That check applies to every guarded route, `/auth` included.
+ *
  * @throws `AppError` with 401 when the token is missing or invalid.
+ * @throws `AppError` with 403 (4022) when the token's linked firm is paused.
+ * @throws `AppError` with 403 (4021) when the linked firm is not approved (non-`/auth` routes).
  */
 export const authenticate: RequestHandler = (
   req: Request,
@@ -23,14 +30,21 @@ export const authenticate: RequestHandler = (
 
   const token = authHeader.split(' ')[1];
 
+  // Only the JWT verification maps to 401 — the paused lookup below must never be caught here.
+  let payload: JwtPayload;
   try {
-    const payload = verifyToken(token);
-    // Only ACCESS tokens authorize normal API use — reject password-reset and refresh tokens.
-    if (payload.purpose === 'PASSWORD_RESET' || payload.purpose === 'REFRESH') {
-      return next(
-        new AppError('Invalid token for this resource', StatusCodes.UNAUTHORIZED, 4015),
-      );
-    }
+    payload = verifyToken(token);
+  } catch {
+    return next(new AppError('Invalid or expired token', StatusCodes.UNAUTHORIZED));
+  }
+
+  // Only ACCESS tokens authorize normal API use — reject password-reset and refresh tokens.
+  if (payload.purpose === 'PASSWORD_RESET' || payload.purpose === 'REFRESH') {
+    return next(new AppError('Invalid token for this resource', StatusCodes.UNAUTHORIZED, 4015));
+  }
+
+  /** Runs once the paused check has passed (or was skipped); calls `next` exactly once. */
+  const admit = (): void => {
     // Gate self-registered dealers/agents whose firm isn't APPROVED: they may sign in and use the
     // `/auth` routes (e.g. `/auth/me` to poll status, logout) but nothing else until approved.
     // `req.baseUrl` is the router mount (e.g. `/api/v1/vehicle-processes`, `/api/v1/auth`).
@@ -53,9 +67,22 @@ export const authenticate: RequestHandler = (
     }
     req.user = payload;
     next();
-  } catch {
-    next(new AppError('Invalid or expired token', StatusCodes.UNAUTHORIZED));
+  };
+
+  // Super-admins and users with no firm link are never paused — stay synchronous for them.
+  if (payload.isSuperAdmin || (!payload.dealerId && !payload.agentId)) {
+    return admit();
   }
+
+  // Paused firm (super-admin access switch): rejected on EVERY guarded route, `/auth` included.
+  // Express 4 does not catch rejected promises, so both outcomes are handled right here: resolve →
+  // 4022 or `admit()`; reject → `next(err)`. Fail closed — a failed lookup never admits the
+  // request, and it surfaces as a 5xx (a 401 would make the client refresh and sign the user out).
+  isFirmAccessPaused(payload.dealerId, payload.agentId).then(
+    (paused) => (paused ? next(buildFirmAccessPausedError()) : admit()),
+    (err: unknown) =>
+      next(err instanceof Error ? err : new AppError('Unable to verify account access')),
+  );
 };
 
 /**

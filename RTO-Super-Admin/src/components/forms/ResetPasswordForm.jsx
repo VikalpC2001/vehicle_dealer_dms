@@ -114,8 +114,10 @@ export function ResetPasswordForm() {
           </div>
           {password && (
             <div className="space-y-1">
-              <Progress value={strength.score * 25} className="h-1.5" />
-              <p className="text-xs text-muted-foreground">Strength: {strength.label}</p>
+              <Progress value={strength.percent} className="h-1.5" indicatorClassName={strength.color} />
+              <p className="text-xs text-muted-foreground">
+                Strength: <span className={`font-medium ${strength.textColor}`}>{strength.label}</span>
+              </p>
             </div>
           )}
           {errors.password && <p className="text-sm text-destructive">{errors.password.message}</p>}

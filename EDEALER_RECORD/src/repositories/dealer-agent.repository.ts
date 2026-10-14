@@ -42,6 +42,21 @@ export async function findDealerAgent(
 }
 
 /**
+ * Finds the dealer-agent grant for a (dealerId, agentId) pair, whatever its status (ACTIVE or
+ * REVOKED), joined with the compact agent summary. Returns null when the dealer has never granted
+ * access to that agent — the guard a dealer-scoped "work given to this agent" view relies on.
+ */
+export async function findDealerAgentWithAgent(
+  dealerId: string,
+  agentId: string,
+): Promise<DealerAgentWithAgent | null> {
+  return prisma.dealerAgent.findUnique({
+    where: { dealerId_agentId: { dealerId, agentId } },
+    include: { agent: { select: agentSummarySelect } },
+  });
+}
+
+/**
  * Creates or refreshes a dealer-agent grant.
  *
  * Upserts on the `@@unique([dealerId, agentId])` constraint:

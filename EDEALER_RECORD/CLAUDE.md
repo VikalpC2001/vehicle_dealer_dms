@@ -66,7 +66,7 @@ For errors, **throw** `new AppError(message, StatusCodes.X, appCode)` from servi
 
 ## Auth & multi-tenancy
 
-- `authenticate` ([auth.middleware.ts](src/middlewares/auth.middleware.ts)) verifies the Bearer token and sets `req.user` = `{ sub, email, role, dealerId?, purpose? }`. It rejects `PASSWORD_RESET` tokens. `authenticatePasswordReset` accepts only those (for `POST /auth/reset-password`). `authorize(...roles)` restricts by the **legacy** `Role` enum.
+- `authenticate` ([auth.middleware.ts](src/middlewares/auth.middleware.ts)) verifies the Bearer token and sets `req.user` = `{ sub, email, role, dealerId?, purpose? }`. It rejects `PASSWORD_RESET` tokens. It also rejects tokens whose linked dealer/agent firm is paused by the super-admin (`isActive: false`) with `403`/`4022` on every guarded route (live, short-cached lookup via `firm-access.service.ts`; no `/auth` exemption). `authenticatePasswordReset` accepts only those (for `POST /auth/reset-password`). `authorize(...roles)` restricts by the **legacy** `Role` enum.
 - **Dealer tenancy** — every dealer-scoped query must filter by `dealerId`. Resolve it with helpers from [`src/utils/dealer-scope.ts`](src/utils/dealer-scope.ts):
   - `resolveDealerIdFromRequest(req, explicitId?)` — `ADMIN` must pass an explicit `dealerId`; other roles use the token's `dealerId` (and an explicit value must match it). Throws `4226`/`4032`/`4033`.
   - `assertDealerMatchesToken(req, entityDealerId)` — guards that a fetched resource belongs to the caller's dealer (admins bypass). Throws `4033`/`4034`.

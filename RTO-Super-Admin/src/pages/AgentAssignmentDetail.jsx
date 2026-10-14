@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
-import { ArrowLeft, Car, FileText, User, Users, Building2, Download, Loader2 } from 'lucide-react'
+import { ArrowLeft, Car, User, Users, Building2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -17,7 +17,8 @@ import {
 } from '@/components/ui/select'
 import { Tabs } from '@/components/ui/tabs'
 import { AnimatedTabsList, AnimatedTabPanel } from '@/components/common/AnimatedTabs'
-import { PhotoGalleryDialog } from '@/components/vehicle-process/PhotoGalleryDialog'
+import { DocumentsPanel } from '@/components/vehicle-process/DocumentsPanel'
+import { VehiclePhotosPanel } from '@/components/vehicle-process/VehiclePhotosPanel'
 import { CommentsWidget } from '@/components/vehicle-process/CommentsWidget'
 import { RtoReceiptPanel } from '@/components/vehicle-process/RtoReceiptPanel'
 import { TagChip } from '@/components/vehicle-process/TagChip'
@@ -25,7 +26,6 @@ import { processAssignmentService } from '@/services/processAssignmentService'
 import { agentStatusService } from '@/services/agentStatusService'
 import { getErrorMessage } from '@/lib/authErrors'
 import { formatDate } from '@/lib/utils'
-import { toAppImageUrl, isPdfUrl } from '@/lib/vehicleProcess'
 import { exportProcessImagesZip } from '@/lib/zip'
 import { toast } from '@/hooks/use-toast'
 
@@ -33,6 +33,7 @@ const TABS = [
   { value: 'vehicle', label: 'Vehicle & Persons' },
   { value: 'rto', label: 'RTO & RC Book' },
   { value: 'documents', label: 'Documents' },
+  { value: 'vehicle-photos', label: 'Vehicle Photos' },
 ]
 
 /** Read-only party card (seller/owner or buyer) — the agent views but cannot edit the dealer's persons. */
@@ -63,8 +64,6 @@ export default function AgentAssignmentDetail() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const [tab, setTab] = useState('vehicle')
-  const [galleryOpen, setGalleryOpen] = useState(false)
-  const [galleryIndex, setGalleryIndex] = useState(0)
   const [exporting, setExporting] = useState(false)
 
   const { data, isLoading, isError } = useQuery({
@@ -80,7 +79,16 @@ export default function AgentAssignmentDetail() {
 
   const statusMutation = useMutation({
     mutationFn: (agentStatusId) => processAssignmentService.updateAgentStatus(id, agentStatusId),
-    onSuccess: () => {
+    // The saved status goes straight into the cache, so the dropdown shows it even if the refetch fails.
+    onSuccess: (_data, agentStatusId) => {
+      queryClient.setQueryData(['agent-assignment', id], (old) =>
+        old && {
+          ...old,
+          assignment: {
+            ...old.assignment,
+            agentStatus: statuses.find((s) => String(s.statusId) === String(agentStatusId)) ?? { statusId: agentStatusId },
+          },
+        })
       queryClient.invalidateQueries({ queryKey: ['agent-assignment', id] })
       queryClient.invalidateQueries({ queryKey: ['agent-assignments'] })
       toast({ title: 'Status updated', variant: 'success' })
@@ -99,6 +107,8 @@ export default function AgentAssignmentDetail() {
   const buyerPerson = process.buyer ?? null
   const photos = process.photos ?? []
   const currentStatusId = assignment?.agentStatus?.statusId ?? ''
+  // While a change is saving show the status being saved; otherwise the saved one ('' = none yet).
+  const statusValue = statusMutation.isPending ? String(statusMutation.variables) : currentStatusId ? String(currentStatusId) : ''
   const serviceLabel = assignment?.service?.serviceName ?? assignment?.service?.shortName ?? 'RTO service'
 
   const vehicleRows = [
@@ -144,7 +154,7 @@ export default function AgentAssignmentDetail() {
           {data && (
             <div className="flex shrink-0 items-center gap-2">
               <Select
-                value={currentStatusId ? String(currentStatusId) : undefined}
+                value={statusValue}
                 onValueChange={(value) => statusMutation.mutate(value)}
                 disabled={statusMutation.isPending}
               >
@@ -241,69 +251,15 @@ export default function AgentAssignmentDetail() {
 
           {/* Tab 3 — Documents (gallery + full-screen viewer) */}
           <AnimatedTabPanel value="documents">
-            <Card>
-              <CardHeader className="flex-row items-center justify-between space-y-0">
-                <CardTitle className="flex items-center gap-2 text-base">
-                  <FileText className="h-4 w-4 text-muted-foreground" />
-                  Documents ({photos.length})
-                </CardTitle>
-                <Button variant="outline" size="sm" onClick={handleExport} disabled={!photos.length || exporting}>
-                  {exporting ? (
-                    <><Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> Exporting…</>
-                  ) : (
-                    <><Download className="mr-1.5 h-4 w-4" /> Export ZIP</>
-                  )}
-                </Button>
-              </CardHeader>
-              <CardContent>
-                {!photos.length ? (
-                  <p className="text-sm text-muted-foreground">No documents uploaded.</p>
-                ) : (
-                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-                    {photos.map((photo, i) => (
-                      <button
-                        key={photo.processUploadPhotoId ?? photo.imageName}
-                        type="button"
-                        onClick={() => {
-                          setGalleryIndex(i)
-                          setGalleryOpen(true)
-                        }}
-                        className="group relative aspect-square overflow-hidden rounded-lg border border-border bg-muted/30 transition hover:ring-2 hover:ring-primary"
-                        aria-label={`View ${photo.category || 'document'}`}
-                      >
-                        {isPdfUrl(photo.photoUrl) ? (
-                          <div className="flex h-full w-full flex-col items-center justify-center gap-1 text-muted-foreground">
-                            <FileText className="h-8 w-8" />
-                            <span className="text-[11px] font-medium">PDF</span>
-                          </div>
-                        ) : (
-                          <img
-                            src={toAppImageUrl(photo.photoUrl)}
-                            alt={photo.category}
-                            className="h-full w-full object-cover transition duration-200 group-hover:scale-105"
-                            loading="lazy"
-                          />
-                        )}
-                        <span className="absolute inset-x-0 bottom-0 truncate bg-gradient-to-t from-black/70 to-transparent px-2 py-1.5 text-left text-xs font-medium text-white">
-                          {photo.category}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
+            <DocumentsPanel photos={photos} editable={false} onExport={handleExport} exporting={exporting} />
+          </AnimatedTabPanel>
+
+          {/* Tab 4 — Vehicle photos (read-only) */}
+          <AnimatedTabPanel value="vehicle-photos">
+            <VehiclePhotosPanel vehiclePhotos={process.vehiclePhotos} editable={false} />
           </AnimatedTabPanel>
         </Tabs>
       )}
-
-      <PhotoGalleryDialog
-        open={galleryOpen}
-        onOpenChange={setGalleryOpen}
-        photos={photos}
-        index={galleryIndex}
-        onIndexChange={setGalleryIndex}
-      />
 
       {/* Floating comments widget — shared thread with the dealer (chat popover). */}
       {process.processId && <CommentsWidget processId={process.processId} />}

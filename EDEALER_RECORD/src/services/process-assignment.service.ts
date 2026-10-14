@@ -1,20 +1,29 @@
 import { StatusCodes } from 'http-status-codes';
-import type { LedgerEntry, ProcessAssignment } from '@prisma/client';
+import type { DealerAgentStatus, LedgerEntry, ProcessAssignment } from '@prisma/client';
 import * as processAssignmentRepository from '../repositories/process-assignment.repository';
 import * as khataRepository from '../repositories/khata.repository';
 import * as vehicleProcessRepository from '../repositories/vehicle-process.repository';
 import * as rtoServiceRepository from '../repositories/rto-service.repository';
+import * as dealerAgentRepository from '../repositories/dealer-agent.repository';
+import * as agentStatusRepository from '../repositories/agent-status.repository';
 import type {
   AssignmentDealerSummary,
   ProcessAssignmentDetailRow,
   ProcessAssignmentForAgent,
+  ProcessAssignmentForDealerAgent,
   ProcessAssignmentWithRelations,
   ProcessAssignmentWithServiceStatus,
 } from '../repositories/process-assignment.repository';
+import type {
+  DealerAgentGrantAgentSummary,
+  DealerAgentWithAgent,
+} from '../repositories/dealer-agent.repository';
 import type { ProcessTagDto } from '../repositories/process-tag.repository';
 import { getVehicleProcessDetails } from './vehicle-process.service';
 import type { VehicleProcessDetailsDto } from './vehicle-process.service';
 import { AppError } from '../utils/app-error';
+import { parsePagination, buildPaginationMeta } from '../utils/pagination';
+import type { PaginatedResult, PaginationQuery } from '../types';
 
 /**
  * Fields a dealer supplies when assigning a vehicle process + one or more RTO services to an agent.
@@ -383,4 +392,172 @@ export async function updateAssignmentAgentStatus(
     );
   }
   return processAssignmentRepository.updateAssignmentAgentStatus(assignmentId, agentStatusId);
+}
+
+/**
+ * One row of a dealer's "work given to this agent" list: the assignment with its RTO service, the
+ * agent's own kanban status, the live ledger `cost` (or `null`), and the source process — vehicle,
+ * lifecycle status, deal number, the agent-entered RC-book tracking number, whether the agent has
+ * uploaded an RTO receipt (`hasReceipt`; the file itself is served by the process detail), and tags.
+ */
+export type DealerAgentAssignmentDto = Omit<ProcessAssignmentForDealerAgent, 'process'> & {
+  cost: AssignmentCostDto | null;
+  process: Omit<ProcessAssignmentForDealerAgent['process'], 'processTags' | 'receiptImageName'> & {
+    hasReceipt: boolean;
+    tags: ProcessTagDto[];
+  };
+};
+
+/** How many of the pair's live assignments sit in one of the agent's kanban statuses. */
+export interface DealerAgentStatusCount {
+  /** The agent status UUID, or `null` for the "no status yet" bucket. */
+  statusId: string | null;
+  statusName: string;
+  colour: string | null;
+  count: number;
+}
+
+/**
+ * Totals for the work a dealer has given one agent, plus who the agent is and whether the grant is
+ * still live. `byStatus` follows the agent's own board order and lists every status (zero counts
+ * included); a trailing "No status" bucket appears only when some assignment has no status.
+ */
+export interface DealerAgentAssignmentSummary {
+  agent: DealerAgentGrantAgentSummary;
+  grantStatus: DealerAgentStatus;
+  totals: {
+    /** Live assignments (one per process + service). */
+    assignments: number;
+    /** Distinct vehicle processes those assignments belong to. */
+    processes: number;
+    /** Assignments that carry a live ledger cost. */
+    costedAssignments: number;
+    /** Sum of those live costs. */
+    totalCost: number;
+  };
+  byStatus: DealerAgentStatusCount[];
+}
+
+/** Label of the bucket for assignments the agent has not put in any status yet. */
+const NO_STATUS_LABEL = 'No status';
+
+/**
+ * Loads the dealer's grant for the agent (ACTIVE or REVOKED), with the agent summary.
+ *
+ * A dealer may only look at an agent they have (or had) a grant with. Every assignment needs a
+ * grant to be created and grants are never deleted, so this also covers "has assigned work".
+ *
+ * @throws AppError 404/4044 when the dealer has never granted access to that agent.
+ */
+const loadDealerAgentGrant = async (
+  dealerId: string,
+  agentId: string,
+): Promise<DealerAgentWithAgent> => {
+  const grant = await dealerAgentRepository.findDealerAgentWithAgent(dealerId, agentId);
+  if (!grant) {
+    throw new AppError('Agent not found', StatusCodes.NOT_FOUND, 4044);
+  }
+  return grant;
+};
+
+/** Maps a repository row to the dealer-agent list DTO (tags flattened, receipt key hidden). */
+const toDealerAgentAssignmentDto = (
+  row: ProcessAssignmentForDealerAgent,
+  cost: AssignmentCostDto | null,
+): DealerAgentAssignmentDto => {
+  const { processTags, receiptImageName, ...restProcess } = row.process;
+  return {
+    ...row,
+    cost,
+    process: {
+      ...restProcess,
+      hasReceipt: Boolean(receiptImageName),
+      tags: processTags.map((pt) => pt.tag),
+    },
+  };
+};
+
+/**
+ * Lists one page of the live work a dealer has given an agent (newest first): each assignment with
+ * its RTO service, the agent's kanban status, the live ledger cost, and the source process summary.
+ * CANCELLED assignments and assignments whose process is in the recycle bin are left out.
+ *
+ * @param dealerId - Resolved dealer scope.
+ * @param agentId - The agent whose assigned work to list.
+ * @param query - `page` / `limit` plus the optional `search` and `agentStatusId` filters.
+ * @throws AppError 404/4044 when the dealer has never granted access to that agent.
+ */
+export async function listAssignmentsForDealerAgent(
+  dealerId: string,
+  agentId: string,
+  query: PaginationQuery & { search?: string | null; agentStatusId?: string | null },
+): Promise<PaginatedResult<DealerAgentAssignmentDto>> {
+  await loadDealerAgentGrant(dealerId, agentId);
+
+  const { items, total } = await processAssignmentRepository.listAssignmentsForDealerAgent(
+    { dealerId, agentId, search: query.search ?? null, agentStatusId: query.agentStatusId ?? null },
+    parsePagination(query),
+  );
+  const costByAssignment = await khataRepository.listActiveCostEntriesForAssignments(
+    items.map((a) => a.assignmentId),
+  );
+  return {
+    data: items.map((a) =>
+      toDealerAgentAssignmentDto(a, toCostDto(costByAssignment.get(a.assignmentId) ?? null)),
+    ),
+    meta: buildPaginationMeta(total, query),
+  };
+}
+
+/**
+ * Summarises ALL the live work a dealer has given an agent (independent of any list filter or
+ * page): who the agent is, whether the grant is still live, how many assignments and distinct
+ * vehicle processes there are, the total of the live ledger costs, and a count per agent status.
+ *
+ * @param dealerId - Resolved dealer scope.
+ * @param agentId - The agent whose assigned work to summarise.
+ * @throws AppError 404/4044 when the dealer has never granted access to that agent.
+ */
+export async function getDealerAgentAssignmentSummary(
+  dealerId: string,
+  agentId: string,
+): Promise<DealerAgentAssignmentSummary> {
+  const grant = await loadDealerAgentGrant(dealerId, agentId);
+
+  const [keys, statuses] = await Promise.all([
+    processAssignmentRepository.listAssignmentKeysForDealerAgent(dealerId, agentId),
+    agentStatusRepository.listAllAgentStatusesForAgent(agentId),
+  ]);
+  const cost = await khataRepository.sumActiveCostsForAssignments(keys.map((k) => k.assignmentId));
+
+  // A status the agent deleted between the two reads above is no longer in `statuses`: count its
+  // assignments under "No status" (where the database puts them), so the counts always add up.
+  const knownStatusIds = new Set(statuses.map((s) => s.statusId));
+  const countByStatus = new Map<string | null, number>();
+  for (const key of keys) {
+    const id = key.agentStatusId && knownStatusIds.has(key.agentStatusId) ? key.agentStatusId : null;
+    countByStatus.set(id, (countByStatus.get(id) ?? 0) + 1);
+  }
+  const byStatus: DealerAgentStatusCount[] = statuses.map((s) => ({
+    statusId: s.statusId,
+    statusName: s.statusName,
+    colour: s.colour,
+    count: countByStatus.get(s.statusId) ?? 0,
+  }));
+  const withoutStatus = countByStatus.get(null) ?? 0;
+  if (withoutStatus > 0) {
+    byStatus.push({ statusId: null, statusName: NO_STATUS_LABEL, colour: null, count: withoutStatus });
+  }
+
+  return {
+    agent: grant.agent,
+    grantStatus: grant.status,
+    totals: {
+      assignments: keys.length,
+      processes: new Set(keys.map((k) => k.processId)).size,
+      costedAssignments: cost.count,
+      totalCost: cost.total,
+    },
+    byStatus,
+  };
 }

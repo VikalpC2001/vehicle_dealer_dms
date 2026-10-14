@@ -1,14 +1,18 @@
 import { StatusCodes } from 'http-status-codes';
-import type { ProcessUploadPhoto } from '@prisma/client';
+import type { ProcessPhotoKind, ProcessUploadPhoto } from '@prisma/client';
 import * as processUploadPhotoRepository from '../repositories/process-upload-photo.repository';
 import * as vehicleProcessRepository from '../repositories/vehicle-process.repository';
 import { uploadService } from './upload.service';
 import { AppError } from '../utils/app-error';
 
+/** Maximum number of `VEHICLE`-kind photos allowed per process. */
+const MAX_VEHICLE_PHOTOS = 5;
+
 export interface CreateProcessUploadPhotoInput {
   processId: string;
   category: string;
   imageName: string;
+  kind?: ProcessPhotoKind;
 }
 
 export interface UpdateProcessUploadPhotoInput {
@@ -58,6 +62,18 @@ export async function createProcessUploadPhoto(
   input: CreateProcessUploadPhotoInput,
 ): Promise<ProcessUploadPhoto> {
   await assertProcessOwnedByDealer(input.processId, dealerId);
+  const kind: ProcessPhotoKind = input.kind ?? 'DOCUMENT';
+  // A vehicle can have at most 5 photos; count before relocating any bytes so we fail fast.
+  if (kind === 'VEHICLE') {
+    const existing = await processUploadPhotoRepository.countVehiclePhotos(input.processId);
+    if (existing >= MAX_VEHICLE_PHOTOS) {
+      throw new AppError(
+        'A vehicle can have at most 5 photos.',
+        StatusCodes.CONFLICT,
+        4114,
+      );
+    }
+  }
   // Relocate the flat-uploaded file into this process's folder so all its documents stay together.
   const registrationNumber = await vehicleProcessRepository.findVehicleRegistrationForProcess(
     input.processId,
@@ -68,19 +84,34 @@ export async function createProcessUploadPhoto(
     registrationNumber,
     input.processId,
   );
+  let created: ProcessUploadPhoto;
   try {
-    return await processUploadPhotoRepository.createProcessUploadPhoto({
+    created = await processUploadPhotoRepository.createProcessUploadPhoto({
       processId: input.processId,
       category: input.category.trim(),
       imageName,
+      kind,
     });
   } catch (err) {
-    // Roll the move back so the flat file stays valid for a retry when the write failed.
+    // Roll the move back so the flat file stays valid for a retry when the write failed — but ONLY if
+    // no committed row references the folder key. Two photos can legitimately share one uploaded key;
+    // if a sibling already moved the shared bytes there, relocate resolved without moving and moving
+    // it back would orphan that sibling's file.
     if (imageName !== originalKey) {
-      await uploadService.tryMove(imageName, originalKey);
+      const stillReferenced = await processUploadPhotoRepository.countByImageName(imageName);
+      if (stillReferenced === 0) {
+        await uploadService.tryMove(imageName, originalKey);
+      }
     }
     throw err;
   }
+  // The first vehicle photo becomes the primary (starred). Done AFTER the insert via an idempotent,
+  // race-safe reconcile that stars the OLDEST vehicle photo when none is starred — so two concurrent
+  // first-photo uploads converge on the same single row instead of both self-starring.
+  if (kind === 'VEHICLE') {
+    await processUploadPhotoRepository.ensureStarredVehiclePhoto(input.processId);
+  }
+  return created;
 }
 
 /**
@@ -162,27 +193,101 @@ export async function getProcessUploadPhotoById(
 }
 
 /**
- * Updates `category` and `imageName` (dealer-scoped).
+ * Stars a vehicle photo (dealer-scoped) as the process's sole primary/profile photo. Clearing the
+ * star on every other vehicle photo happens atomically in the repository, preserving the one-star
+ * invariant. Only `VEHICLE`-kind photos can be starred.
+ *
+ * @param dealerId - Resolved dealer scope.
+ * @param processUploadPhotoId - The photo to star.
+ */
+export async function setStarredVehiclePhoto(
+  dealerId: string,
+  processUploadPhotoId: string,
+): Promise<ProcessUploadPhoto> {
+  const row = await getPhotoForDealerOrThrow(processUploadPhotoId, dealerId);
+  if (row.kind !== 'VEHICLE') {
+    throw new AppError('Only vehicle photos can be starred', StatusCodes.CONFLICT, 4115);
+  }
+  return processUploadPhotoRepository.setStarredVehiclePhoto(row.processId, processUploadPhotoId);
+}
+
+/**
+ * Updates a photo (dealer-scoped). Always allows a `category` change. When `imageName` is a NEW
+ * flat upload key (different from the stored one) the file is relocated into the process folder and
+ * the OLD image bytes are best-effort removed after the row is updated. `kind` is immutable. An
+ * unchanged/absent `imageName` keeps the category-only behaviour.
  */
 export async function updateProcessUploadPhoto(
   dealerId: string,
   processUploadPhotoId: string,
   input: UpdateProcessUploadPhotoInput,
 ): Promise<ProcessUploadPhoto> {
-  await getPhotoForDealerOrThrow(processUploadPhotoId, dealerId);
-  return processUploadPhotoRepository.updateProcessUploadPhoto(processUploadPhotoId, {
-    category: input.category.trim(),
-    imageName: input.imageName.trim(),
-  });
+  const existing = await getPhotoForDealerOrThrow(processUploadPhotoId, dealerId);
+  const category = input.category.trim();
+  const suppliedKey = input.imageName.trim();
+
+  // Category-only update: the supplied image key already matches the stored one.
+  if (suppliedKey === existing.imageName) {
+    return processUploadPhotoRepository.updateProcessUploadPhoto(processUploadPhotoId, {
+      category,
+      imageName: existing.imageName,
+    });
+  }
+
+  // A new image was uploaded — relocate it into the process folder (same helper as create).
+  const registrationNumber = await vehicleProcessRepository.findVehicleRegistrationForProcess(
+    existing.processId,
+  );
+  const newImageName = await uploadService.relocateToProcessFolder(
+    suppliedKey,
+    registrationNumber,
+    existing.processId,
+  );
+  let updated: ProcessUploadPhoto;
+  try {
+    updated = await processUploadPhotoRepository.updateProcessUploadPhoto(processUploadPhotoId, {
+      category,
+      imageName: newImageName,
+    });
+  } catch (err) {
+    // Roll the move back for a retry — but only if no committed row references the folder key (a
+    // sibling may share these bytes; moving them back would orphan it).
+    if (newImageName !== suppliedKey) {
+      const stillReferenced = await processUploadPhotoRepository.countByImageName(newImageName);
+      if (stillReferenced === 0) {
+        await uploadService.tryMove(newImageName, suppliedKey);
+      }
+    }
+    throw err;
+  }
+  // Remove the old bytes unless another row still references the same key. Best-effort; never throws.
+  if (existing.imageName !== newImageName) {
+    const stillReferenced = await processUploadPhotoRepository.countByImageName(existing.imageName);
+    if (stillReferenced === 0) {
+      await uploadService.deleteFile(existing.imageName);
+    }
+  }
+  return updated;
 }
 
 /**
- * Deletes a row (dealer-scoped).
+ * Deletes a row (dealer-scoped) and best-effort removes its underlying file, unless another row
+ * still references the same image key.
  */
 export async function deleteProcessUploadPhoto(
   dealerId: string,
   processUploadPhotoId: string,
 ): Promise<void> {
-  await getPhotoForDealerOrThrow(processUploadPhotoId, dealerId);
+  const existing = await getPhotoForDealerOrThrow(processUploadPhotoId, dealerId);
   await processUploadPhotoRepository.deleteProcessUploadPhoto(processUploadPhotoId);
+  // Deleting the starred (primary) vehicle photo promotes the oldest remaining one so the process keeps
+  // exactly one starred photo whenever any vehicle photo remains. Idempotent + self-healing: if this
+  // reconcile fails transiently after the delete commits, the next create/delete/star fixes it.
+  if (existing.kind === 'VEHICLE' && existing.isStarred) {
+    await processUploadPhotoRepository.ensureStarredVehiclePhoto(existing.processId);
+  }
+  const stillReferenced = await processUploadPhotoRepository.countByImageName(existing.imageName);
+  if (stillReferenced === 0) {
+    await uploadService.deleteFile(existing.imageName);
+  }
 }

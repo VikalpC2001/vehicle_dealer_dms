@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { EmptyState } from '@/components/common/EmptyState'
+import { AgentStatusPill } from '@/components/vehicle-process/AgentStatusPill'
 import {
   Select,
   SelectContent,
@@ -122,19 +123,7 @@ export default function AgentAssignments() {
                       </div>
                       <div className="flex items-center gap-2">
                         {row.agentStatus ? (
-                          <Badge
-                            variant="outline"
-                            style={
-                              row.agentStatus.colour
-                                ? {
-                                    borderColor: row.agentStatus.colour,
-                                    color: row.agentStatus.colour,
-                                  }
-                                : undefined
-                            }
-                          >
-                            {row.agentStatus.statusName}
-                          </Badge>
+                          <AgentStatusPill status={row.agentStatus} />
                         ) : (
                           <Badge variant="secondary">Unassigned</Badge>
                         )}

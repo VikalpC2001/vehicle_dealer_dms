@@ -165,6 +165,29 @@ export async function setDealerSubscription(
   });
 }
 
+/** Sets a dealer's access switch (`isActive`; `false` = paused) — super-admin access management. */
+export async function setDealerAccess(dealerId: string, isActive: boolean): Promise<Dealer> {
+  return prisma.dealer.update({
+    where: { dealerId },
+    data: { isActive },
+  });
+}
+
+/**
+ * Lean access lookup: reads only `isActive` by primary key. Called by `authenticate` on the hot
+ * path (through the firm-access cache), so it must stay a single-column read.
+ *
+ * @returns The flag, or `null` when the dealer does not exist.
+ */
+export async function findDealerAccessById(
+  dealerId: string,
+): Promise<Pick<Dealer, 'isActive'> | null> {
+  return prisma.dealer.findUnique({
+    where: { dealerId },
+    select: { isActive: true },
+  });
+}
+
 /**
  * Sets a dealer's self-registration approval state (and optional reason for a rejection).
  *

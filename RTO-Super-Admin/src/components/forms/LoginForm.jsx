@@ -13,6 +13,7 @@ import { EmailOtpStep } from '@/components/forms/EmailOtpStep'
 import { useAuth } from '@/context/AuthContext'
 import { authService } from '@/services/authService'
 import { getErrorCode } from '@/lib/authErrors'
+import { isAccessPausedError } from '@/lib/accessPaused'
 import { homeForRole } from '@/lib/constants'
 import { toast } from '@/hooks/use-toast'
 
@@ -47,6 +48,8 @@ export function LoginForm() {
         toast({ title: 'Verify your email', description: 'We sent a fresh code to your email.', variant: 'success' })
         return
       }
+      // Firm paused by the super admin (4022): the app-wide "Access paused" popup is the message.
+      if (isAccessPausedError(err)) return
       toast({ title: 'Login failed', description: authService.getErrorMessage(err), variant: 'destructive' })
     }
   }

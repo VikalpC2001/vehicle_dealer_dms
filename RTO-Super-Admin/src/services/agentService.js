@@ -81,6 +81,12 @@ export const agentService = {
     return unwrap(data)
   },
 
+  /** PATCH /agents/:id/access — super-admin pauses (`false`) or resumes (`true`) the agent's access. */
+  async setAccess(id, isActive) {
+    const { data } = await api.patch(`/agents/${id}/access`, { isActive })
+    return unwrap(data) // { id, isActive }
+  },
+
   /** DELETE /agents/:id — remove an agent. */
   async remove(id) {
     const { data } = await api.delete(`/agents/${id}`)

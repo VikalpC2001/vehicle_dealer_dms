@@ -54,7 +54,7 @@ export function CommentsWidget({ processId }) {
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={reduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.95, y: 8 }}
             transition={{ duration: 0.18, ease: 'easeOut' }}
-            className="fixed bottom-24 right-6 z-40 flex h-[70vh] max-h-[calc(100vh-12rem)] w-[calc(100vw-3rem)] max-w-[400px] origin-bottom-right flex-col overflow-hidden rounded-xl border border-border bg-card shadow-2xl"
+            className="fixed bottom-24 right-6 z-20 flex h-[70vh] max-h-[calc(100vh-12rem)] w-[calc(100vw-3rem)] max-w-[400px] origin-bottom-right flex-col overflow-hidden rounded-xl border border-border bg-card shadow-2xl"
           >
             <CommentsPanel processId={processId} fill className="h-full border-0 shadow-none" />
           </motion.div>
@@ -64,7 +64,7 @@ export function CommentsWidget({ processId }) {
       <Button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="fixed bottom-6 right-6 z-40 h-14 w-14 rounded-full p-0 shadow-lg"
+        className="fixed bottom-6 right-6 z-20 h-14 w-14 rounded-full p-0 shadow-lg"
         aria-label={open ? 'Close comments' : `Open comments (${comments.length})`}
         aria-expanded={open}
         aria-controls="comments-widget-panel"

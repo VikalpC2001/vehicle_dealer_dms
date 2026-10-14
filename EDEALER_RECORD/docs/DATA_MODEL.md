@@ -28,9 +28,13 @@ Dealer-scoped models carry a `dealerId` and **must be filtered by it** in querie
 
 ## Dealers
 
-- **`Dealer`** (`dealers`) — `dealerId` PK · `firmName` · `dealerName` · `address` · `city` · `state` · `pincode` · `mobileNo` unique · `emailId` unique · `displayName` · `whatsappNo` unique · `isSubscribe` (bool, default false). Relations: `dealerReferences`, `vehicleProcesses`, `processReferences`, `dealerWiseUploadCategories`, `dealerWiseUsers`.
+- **`Dealer`** (`dealers`) — `dealerId` PK · `firmName` · `dealerName` · `address` · `city` · `state` · `pincode` · `mobileNo` unique · `emailId` unique · `displayName` · `whatsappNo` unique · `isSubscribe` (bool, default false) · `isActive` (bool, default true, column `is_active` — super-admin access switch; `false` = paused: the dealer's login users cannot sign in and live sessions get `403`/`4022`; written only by `PATCH /dealers/:id/access`). Relations: `dealerReferences`, `vehicleProcesses`, `processReferences`, `dealerWiseUploadCategories`, `dealerWiseUsers`.
 - **`DealerReference`** (`dealer_references`) — `referenceId` PK · `dealerId?` FK→Dealer · `referenceName` · `referenceNumber` · → `processReferences`.
 - **`DealerWiseUser`** (`dealer_wise_user`) — `dwuId` PK · `userId` **unique** FK→User (cascade) · `dealerId` FK→Dealer (cascade) · `@@index([dealerId])`. *User↔Dealer is 1:1 (a user belongs to one dealer).*
+
+## Agents
+
+- **`Agent`** (`agents`) — `agentId` PK · `firmName` · `agentName` · `address?` · `city?` · `state?` · `pincode?` · `mobileNo?` unique · `emailId?` unique · `displayName` · `whatsappNo?` unique · `isSubscribe` (bool, default false) · `isActive` (bool, default true, column `is_active` — super-admin access switch, same meaning as `Dealer.isActive`; written only by `PATCH /agents/:id/access`). *Mirrors `Dealer`; a user links to it via `AgentWiseUser`. See [SUBSCRIPTION_ACCESS_MODEL.md](SUBSCRIPTION_ACCESS_MODEL.md) for the full dealer↔agent model and how `isActive` differs from `isSubscribe` / `approvalStatus`.*
 
 ## Master data
 

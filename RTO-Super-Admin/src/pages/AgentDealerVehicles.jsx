@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { EmptyState } from '@/components/common/EmptyState'
+import { SearchInput } from '@/components/common/SearchInput'
 import {
   Dialog,
   DialogContent,
@@ -25,6 +26,7 @@ import { TagChip } from '@/components/vehicle-process/TagChip'
 import { TagsPanel } from '@/components/vehicle-process/TagsPanel'
 import { vehicleProcessService, getProcessId } from '@/services/vehicleProcessService'
 import { dealerTagService } from '@/services/dealerTagService'
+import { useDebounce } from '@/hooks/useDebounce'
 import { formatDate } from '@/lib/utils'
 
 const ALL_TAGS = '__all__'
@@ -47,14 +49,17 @@ export default function AgentDealerVehicles() {
   const dealerName = state?.dealerName ?? 'Dealer'
   const [tagFilter, setTagFilter] = useState(ALL_TAGS)
   const [manageOpen, setManageOpen] = useState(false)
+  const [searchInput, setSearchInput] = useState('')
+  const search = useDebounce(searchInput.trim(), 300)
 
   const { data, isLoading } = useQuery({
-    queryKey: ['vehicle-processes', 'agent', dealerId, tagFilter],
+    queryKey: ['vehicle-processes', 'agent', dealerId, tagFilter, search],
     queryFn: () =>
       vehicleProcessService.getAll({
         dealerId,
         page: 1,
         limit: 100,
+        search,
         tagId: tagFilter === ALL_TAGS ? undefined : tagFilter,
       }),
     enabled: Boolean(dealerId),
@@ -79,20 +84,6 @@ export default function AgentDealerVehicles() {
             <p className="text-muted-foreground mt-1">Vehicle/RTO processes you manage for this dealer.</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Select
-              value={tagFilter}
-              onValueChange={setTagFilter}
-            >
-              <SelectTrigger className="w-44">
-                <SelectValue placeholder="All tags" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={ALL_TAGS}>All tags</SelectItem>
-                {tags.map((t) => (
-                  <SelectItem key={tagIdOf(t)} value={tagIdOf(t)}>{t.tagName}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
             <Button variant="outline" onClick={() => setManageOpen(true)}>
               <Tags className="mr-2 h-4 w-4" /> Manage tags
             </Button>
@@ -106,6 +97,27 @@ export default function AgentDealerVehicles() {
           </div>
         </div>
       </motion.div>
+
+      {/* Search + filter toolbar, sitting directly above the list. */}
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+        <SearchInput
+          value={searchInput}
+          onChange={setSearchInput}
+          placeholder="Search by vehicle number or seller name"
+          className="w-full sm:flex-1"
+        />
+        <Select value={tagFilter} onValueChange={setTagFilter}>
+          <SelectTrigger className="w-full sm:w-48">
+            <SelectValue placeholder="All tags" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={ALL_TAGS}>All tags</SelectItem>
+            {tags.map((t) => (
+              <SelectItem key={tagIdOf(t)} value={tagIdOf(t)}>{t.tagName}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
 
       <Card>
         <CardHeader className="flex-row items-center gap-2 space-y-0">
@@ -121,11 +133,19 @@ export default function AgentDealerVehicles() {
             </div>
           ) : processes.length === 0 ? (
             <EmptyState
-              title={tagFilter !== ALL_TAGS ? 'No processes with this tag' : 'No vehicle processes yet'}
+              title={
+                search
+                  ? 'No matching processes'
+                  : tagFilter !== ALL_TAGS
+                    ? 'No processes with this tag'
+                    : 'No vehicle processes yet'
+              }
               description={
-                tagFilter !== ALL_TAGS
-                  ? 'No processes carry this tag yet. Try another tag or clear the filter.'
-                  : 'Add the first vehicle process for this dealer to start tracking RTO work.'
+                search
+                  ? 'No processes match your search. Try a different vehicle number or seller name.'
+                  : tagFilter !== ALL_TAGS
+                    ? 'No processes carry this tag yet. Try another tag or clear the filter.'
+                    : 'Add the first vehicle process for this dealer to start tracking RTO work.'
               }
             />
           ) : (

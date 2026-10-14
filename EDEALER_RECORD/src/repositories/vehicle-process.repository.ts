@@ -28,6 +28,7 @@ export type VehicleProcessWithPersons = VehicleProcess & { persons: Person[] };
 /** A process with its persons AND booked expenses — used to build per-vehicle history + net profit. */
 export type VehicleProcessWithPersonsAndExpenses = VehicleProcessWithPersons & {
   processExpenses: ProcessExpense[];
+  processReferences: (ProcessReference & { reference: DealerReference | null })[];
 };
 
 /** A tag join row selected on a process read, carrying only the flat tag summary. */
@@ -44,6 +45,8 @@ export type VehicleProcessListItem = VehicleProcess & {
   persons: Person[];
   vehicle: Vehicle | null;
   processTags: ProcessTagSelection[];
+  /** At most the single starred VEHICLE-kind photo (for the list row thumbnail); empty otherwise. */
+  processUploadPhotos: ProcessUploadPhoto[];
 };
 
 export type VehicleProcessWithStartRelations = VehicleProcess & {
@@ -101,6 +104,10 @@ export interface CreateVehicleProcessData {
   dealerId: string;
   /** Optional agent-kanban column for agent-created (placeholder) processes shown on the agent board. */
   agentStatusId?: string | null;
+  /** Optional chosen lifecycle status; `null` = OPEN (status-less). */
+  status?: VehicleProcessStatus | null;
+  /** Optional human-facing deal/reference number captured at creation (free-text, ≤100 chars). */
+  dealNumber?: string | null;
   processDate: Date;
   persons: PersonInputData[];
   purchasePrice?: number | null;
@@ -144,6 +151,11 @@ export async function createVehicleProcess(
       vehicleId: data.vehicleId,
       dealerId: data.dealerId,
       agentStatusId: data.agentStatusId ?? null,
+      status: data.status ?? null,
+      // Stamp the sold date when a process is born SOLD (the wizard can pick SOLD at creation) — use the
+      // chosen process date (the deal date) so it matches the buyer's recorded date; else null.
+      soldDate: data.status === 'SOLD' ? data.processDate ?? new Date() : null,
+      dealNumber: data.dealNumber ?? null,
       processDate: data.processDate,
       purchasePrice: data.purchasePrice ?? null,
       salePrice: data.salePrice ?? null,
@@ -185,9 +197,22 @@ export async function listVehicleProcesses(
   search?: string | null,
   tagId?: string | null,
   status?: VehicleProcessStatusFilter | null,
+  dateFrom?: string | null,
+  dateTo?: string | null,
 ): Promise<{ items: VehicleProcessListItem[]; total: number }> {
   // Dealer-scoped when a dealerId is given (non-admin); `{ equals }` is null-safe.
-  const where: Prisma.VehicleProcessWhereInput = dealerId ? { dealerId: { equals: dealerId } } : {};
+  // `deletedAt: null` hides soft-deleted (binned) processes from every active list + count.
+  const where: Prisma.VehicleProcessWhereInput = {
+    deletedAt: null,
+    ...(dealerId ? { dealerId: { equals: dealerId } } : {}),
+  };
+  // Inclusive processDate range (dashboard date-range picker); either bound is optional.
+  if (dateFrom || dateTo) {
+    where.processDate = {
+      ...(dateFrom ? { gte: new Date(dateFrom) } : {}),
+      ...(dateTo ? { lte: new Date(dateTo) } : {}),
+    };
+  }
   // Lifecycle-status filter (AND-ed with search/tag): 'OPEN' → status-less rows; a terminal value →
   // exact match; absent → no filter.
   if (status === 'OPEN') {
@@ -218,11 +243,76 @@ export async function listVehicleProcesses(
       skip,
       take,
       orderBy: { createdAt: 'desc' },
-      include: { persons: true, vehicle: true, processTags: processTagsSelect },
+      include: {
+        persons: true,
+        vehicle: true,
+        processTags: processTagsSelect,
+        // Only the starred (primary) vehicle photo travels on a list row, for its thumbnail.
+        processUploadPhotos: { where: { kind: 'VEHICLE', isStarred: true }, take: 1 },
+      },
     }),
     prisma.vehicleProcess.count({ where }),
   ]);
   return { items, total };
+}
+
+/** Which date column an export filters on. */
+export type ExportDateField = 'processDate' | 'soldDate';
+
+/**
+ * Returns just the process IDs (newest first) in a dealer-scoped date range for the export, ranged on
+ * either `processDate` (default) or `soldDate`. Lean on purpose — the export then loads full details
+ * per id. Soft-deleted rows are excluded; a `soldDate` range naturally excludes never-sold processes.
+ *
+ * @param dealerId - Dealer scope (null = all dealers, super-admin).
+ * @param dateFrom - Inclusive lower ISO bound, or null.
+ * @param dateTo - Inclusive upper ISO bound, or null.
+ * @param dateField - The date column to range on.
+ * @param take - Max rows to return.
+ */
+export async function findProcessIdsForExport(
+  dealerId: string | null,
+  dateFrom: string | null,
+  dateTo: string | null,
+  dateField: ExportDateField,
+  statuses: VehicleProcessStatusFilter[],
+  take: number,
+): Promise<{ ids: string[]; total: number }> {
+  const where: Prisma.VehicleProcessWhereInput = {
+    deletedAt: null,
+    ...(dealerId ? { dealerId: { equals: dealerId } } : {}),
+  };
+  if (dateFrom || dateTo) {
+    const range: Prisma.DateTimeNullableFilter = {
+      ...(dateFrom ? { gte: new Date(dateFrom) } : {}),
+      ...(dateTo ? { lte: new Date(dateTo) } : {}),
+    };
+    if (dateField === 'soldDate') where.soldDate = range;
+    else where.processDate = range;
+  }
+  // Status filter (the 4 are OPEN/SOLD/COMPLETE/SCRAP). Empty or all four → no filter (all). 'OPEN'
+  // maps to a null status column; terminal values use `status IN (...)`.
+  if (statuses.length > 0 && statuses.length < 4) {
+    const terminals = statuses.filter((s): s is VehicleProcessStatus => s !== 'OPEN');
+    const hasOpen = statuses.includes('OPEN');
+    if (hasOpen && terminals.length > 0) {
+      where.OR = [{ status: null }, { status: { in: terminals } }];
+    } else if (hasOpen) {
+      where.status = null;
+    } else {
+      where.status = { in: terminals };
+    }
+  }
+  const [rows, total] = await Promise.all([
+    prisma.vehicleProcess.findMany({
+      where,
+      take,
+      orderBy: { createdAt: 'desc' },
+      select: { processId: true },
+    }),
+    prisma.vehicleProcess.count({ where }),
+  ]);
+  return { ids: rows.map((r) => r.processId), total };
 }
 
 /**
@@ -237,8 +327,9 @@ export async function listProcessesForVehicleByDealer(
   dealerId: string,
 ): Promise<VehicleProcessWithPersonsAndExpenses[]> {
   return prisma.vehicleProcess.findMany({
-    where: { vehicleId, dealerId: { equals: dealerId } },
-    include: { persons: true, processExpenses: true },
+    // `deletedAt: null` keeps binned processes out of the per-vehicle history + profit aggregation.
+    where: { vehicleId, dealerId: { equals: dealerId }, deletedAt: null },
+    include: { persons: true, processExpenses: true, processReferences: { include: { reference: true } } },
     orderBy: [{ processDate: { sort: 'asc', nulls: 'last' } }, { createdAt: 'asc' }],
   });
 }
@@ -260,10 +351,11 @@ export interface VehicleMarketSignal {
 export async function getVehicleMarketSignal(vehicleId: string): Promise<VehicleMarketSignal> {
   const [changedHands, distinctDealers] = await Promise.all([
     prisma.vehicleProcess.count({
-      where: { vehicleId, persons: { some: { personType: 'BUYER' } } },
+      // Binned (soft-deleted) processes never contribute to the anonymized market signal.
+      where: { vehicleId, deletedAt: null, persons: { some: { personType: 'BUYER' } } },
     }),
     prisma.vehicleProcess.findMany({
-      where: { vehicleId, dealerId: { not: null } },
+      where: { vehicleId, deletedAt: null, dealerId: { not: null } },
       select: { dealerId: true },
       distinct: ['dealerId'],
     }),
@@ -275,6 +367,23 @@ export async function getVehicleMarketSignal(vehicleId: string): Promise<Vehicle
 }
 
 export async function findVehicleProcessById(
+  processId: string,
+): Promise<VehicleProcessWithPersons | null> {
+  // `findFirst` (not `findUnique`) so the `deletedAt: null` filter applies — a binned process reads as
+  // absent, so the detail/update/status/tags/receipt endpoints all 404 for it.
+  return prisma.vehicleProcess.findFirst({
+    where: { processId, deletedAt: null },
+    include: { persons: true },
+  });
+}
+
+/**
+ * Loads a process by id WITHOUT the soft-delete filter (binned or active) — used only by the recycle
+ * bin flows (restore / permanent delete) that legitimately need to see a soft-deleted row.
+ *
+ * @param processId - Vehicle process UUID.
+ */
+export async function findVehicleProcessByIdIncludingDeleted(
   processId: string,
 ): Promise<VehicleProcessWithPersons | null> {
   return prisma.vehicleProcess.findUnique({
@@ -303,6 +412,8 @@ export async function findOpenProcessForVehicle(
       dealerId,
       vehicleId,
       status: null,
+      // A binned open process must NOT block creating a new one — ignore soft-deleted rows.
+      deletedAt: null,
       ...(excludeProcessId ? { processId: { not: excludeProcessId } } : {}),
     },
   });
@@ -332,8 +443,9 @@ export async function findVehicleRegistrationForProcess(
 export async function findVehicleProcessDetailsById(
   processId: string,
 ): Promise<VehicleProcessDetailsRow | null> {
-  return prisma.vehicleProcess.findUnique({
-    where: { processId },
+  // `findFirst` + `deletedAt: null` so a binned process's detail view 404s (see findVehicleProcessById).
+  return prisma.vehicleProcess.findFirst({
+    where: { processId, deletedAt: null },
     include: {
       vehicle: true,
       persons: true,
@@ -396,10 +508,157 @@ export async function updateVehicleProcess(
   });
 }
 
+/**
+ * Hard-deletes a process and cascades to ALL its children (persons, docs, photos, tasks, expenses,
+ * tags, references, comments, assignments — every child relation is `onDelete: Cascade`). Used only by
+ * the permanent-delete + purge flows; the routine DELETE now soft-deletes instead.
+ *
+ * @param processId - Vehicle process UUID.
+ */
 export async function deleteVehicleProcess(processId: string): Promise<VehicleProcess> {
   return prisma.vehicleProcess.delete({
     where: { processId },
   });
+}
+
+/**
+ * Soft-deletes a process by stamping `deletedAt = now` (moves it to the recycle bin). Children stay in
+ * the DB, hidden by the active-process filters, and return intact on {@link restoreVehicleProcess}.
+ *
+ * @param processId - Vehicle process UUID.
+ */
+export async function softDeleteVehicleProcess(processId: string): Promise<VehicleProcess> {
+  return prisma.vehicleProcess.update({
+    where: { processId },
+    data: { deletedAt: new Date() },
+  });
+}
+
+/**
+ * Restores a soft-deleted process by clearing `deletedAt` (`null` = active). Its children were never
+ * removed, so the process reappears whole across every active-process query.
+ *
+ * @param processId - Vehicle process UUID.
+ */
+export async function restoreVehicleProcess(processId: string): Promise<VehicleProcess> {
+  return prisma.vehicleProcess.update({
+    where: { processId },
+    data: { deletedAt: null },
+  });
+}
+
+/** A recycle-bin row: the process plus its vehicle registration + persons (to show a seller/owner name). */
+export type BinProcessRow = VehicleProcess & {
+  vehicle: { registrationNumber: string } | null;
+  persons: Person[];
+};
+
+/**
+ * Lists a dealer's binned (soft-deleted) processes, newest deletion first, with the vehicle
+ * registration + persons for display and a matching total for pagination. Pass `null`/`undefined`
+ * `dealerId` (super-admin) to list every dealer's binned processes.
+ *
+ * @param dealerId - Dealer scope, or `null`/`undefined` for all dealers (super-admin).
+ * @param skip - Pagination offset.
+ * @param take - Page size.
+ */
+export async function listBinProcessesForDealer(
+  dealerId: string | null | undefined,
+  skip: number,
+  take: number,
+): Promise<{ items: BinProcessRow[]; total: number }> {
+  const where: Prisma.VehicleProcessWhereInput = {
+    deletedAt: { not: null },
+    ...(dealerId ? { dealerId: { equals: dealerId } } : {}),
+  };
+  const [items, total] = await Promise.all([
+    prisma.vehicleProcess.findMany({
+      where,
+      skip,
+      take,
+      orderBy: { deletedAt: 'desc' },
+      include: { vehicle: { select: { registrationNumber: true } }, persons: true },
+    }),
+    prisma.vehicleProcess.count({ where }),
+  ]);
+  return { items, total };
+}
+
+/**
+ * Lists an agent's own binned (soft-deleted) processes across ALL placeholder dealers they own
+ * (`dealer.isPlaceholder && dealer.ownerAgentId === agentId`), newest deletion first, with the
+ * vehicle registration + persons for display and a matching total for pagination. The agent-global
+ * counterpart of {@link listBinProcessesForDealer} (mirrors {@link listProcessesForAgentBoard}).
+ *
+ * @param agentId - The owning agent (from the caller's token).
+ * @param skip - Pagination offset.
+ * @param take - Page size.
+ */
+export async function listBinProcessesForAgent(
+  agentId: string,
+  skip: number,
+  take: number,
+): Promise<{ items: BinProcessRow[]; total: number }> {
+  const where: Prisma.VehicleProcessWhereInput = {
+    deletedAt: { not: null },
+    dealer: { isPlaceholder: true, ownerAgentId: agentId },
+  };
+  const [items, total] = await Promise.all([
+    prisma.vehicleProcess.findMany({
+      where,
+      skip,
+      take,
+      orderBy: { deletedAt: 'desc' },
+      include: { vehicle: { select: { registrationNumber: true } }, persons: true },
+    }),
+    prisma.vehicleProcess.count({ where }),
+  ]);
+  return { items, total };
+}
+
+/** A purge candidate: the process id + its vehicle registration, to compute the upload-folder prefix. */
+export interface PurgeCandidate {
+  processId: string;
+  registrationNumber: string | null;
+}
+
+/**
+ * Lists every process soft-deleted before `cutoff` (the 7-day purge candidates) with just its id and
+ * vehicle registration — enough to compute each one's per-process upload folder prefix so the purge can
+ * clean the files off disk. Must be fetched BEFORE {@link hardDeleteExpiredProcessById} removes the
+ * rows (the vehicle link is gone afterwards).
+ *
+ * @param cutoff - Any process with `deletedAt` strictly before this is a purge candidate.
+ */
+export async function findProcessesToPurge(cutoff: Date): Promise<PurgeCandidate[]> {
+  const rows = await prisma.vehicleProcess.findMany({
+    where: { deletedAt: { not: null, lt: cutoff } },
+    select: { processId: true, vehicle: { select: { registrationNumber: true } } },
+  });
+  return rows.map((row) => ({
+    processId: row.processId,
+    registrationNumber: row.vehicle?.registrationNumber ?? null,
+  }));
+}
+
+/**
+ * Atomically hard-deletes ONE process only if it is still expired (soft-deleted before `cutoff`),
+ * cascading to all children — the per-row unit of the 7-day recycle-bin purge. The `deletedAt` guard
+ * closes the purge TOCTOU race: if the process was restored (`deletedAt` cleared) between the candidate
+ * scan and this call, it matches 0 rows and is left untouched, so its upload folder is not cleaned.
+ *
+ * @param processId - The candidate process UUID.
+ * @param cutoff - The row is only deleted if its `deletedAt` is non-null and strictly before this.
+ * @returns The number of rows deleted: `1` if it was still expired, `0` otherwise.
+ */
+export async function hardDeleteExpiredProcessById(
+  processId: string,
+  cutoff: Date,
+): Promise<number> {
+  const result = await prisma.vehicleProcess.deleteMany({
+    where: { processId, deletedAt: { not: null, lt: cutoff } },
+  });
+  return result.count;
 }
 
 /**
@@ -430,10 +689,23 @@ export async function updateProcessReceipt(
 export async function updateVehicleProcessStatus(
   processId: string,
   status: VehicleProcessStatus | null,
+  soldDate?: Date | null,
 ): Promise<VehicleProcess> {
   return prisma.vehicleProcess.update({
     where: { processId },
-    data: { status },
+    // Leave soldDate untouched unless the caller passes it (e.g. when transitioning into SOLD).
+    data: soldDate === undefined ? { status } : { status, soldDate },
+  });
+}
+
+/** Sets a process's recorded sold date (manual edit of an already-sold process). */
+export async function updateVehicleProcessSoldDate(
+  processId: string,
+  soldDate: Date,
+): Promise<VehicleProcess> {
+  return prisma.vehicleProcess.update({
+    where: { processId },
+    data: { soldDate },
   });
 }
 
@@ -465,7 +737,8 @@ export async function listProcessesForAgentBoard(
   agentId: string,
 ): Promise<AgentBoardProcessRow[]> {
   return prisma.vehicleProcess.findMany({
-    where: { dealer: { isPlaceholder: true, ownerAgentId: agentId } },
+    // `deletedAt: null` keeps binned processes off the agent board.
+    where: { deletedAt: null, dealer: { isPlaceholder: true, ownerAgentId: agentId } },
     orderBy: { createdAt: 'desc' },
     include: {
       vehicle: { select: { registrationNumber: true } },
@@ -491,5 +764,21 @@ export async function updateProcessAgentStatus(
     where: { processId },
     data: { agentStatusId },
   });
+}
+
+/**
+ * Returns EVERY non-null `receiptImageName` object key across all processes, regardless of `deletedAt`
+ * (soft-deleted processes still own their RTO receipt files). Feeds the orphan-root-upload sweep's
+ * referenced-key set so a receipt that (rarely) failed to relocate and is still flat in the root is
+ * never deleted.
+ */
+export async function findAllReceiptImageNames(): Promise<string[]> {
+  const rows = await prisma.vehicleProcess.findMany({
+    where: { receiptImageName: { not: null } },
+    select: { receiptImageName: true },
+  });
+  return rows
+    .map((row) => row.receiptImageName)
+    .filter((name): name is string => name !== null);
 }
 

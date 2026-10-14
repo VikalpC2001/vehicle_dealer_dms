@@ -34,9 +34,28 @@ export function TaskKanbanBoard({ tasks, statuses, onMove, onCardClick }) {
     groups[match ?? UNSORTED].push(t)
   })
 
+  // Completed (DONE) columns are ordered by completion date — most recently completed first — so the
+  // done pile reads as a clean chronological sequence instead of board/creation order.
+  statuses.forEach((s) => {
+    if (s.isDone && groups[s.statusName]) {
+      groups[s.statusName].sort((a, b) => {
+        const at = a.completedAt ? new Date(a.completedAt).getTime() : 0
+        const bt = b.completedAt ? new Date(b.completedAt).getTime() : 0
+        return bt - at
+      })
+    }
+  })
+
   const handleDragStart = (e, card) => {
     e.dataTransfer.setData('text/plain', card.processTaskId)
     e.dataTransfer.effectAllowed = 'move'
+    // Use the card element itself as the drag image so the dragged ghost keeps its rounded corners and
+    // styling (the browser's default drag image can render the card as a square box).
+    try {
+      e.dataTransfer.setDragImage(e.currentTarget, e.nativeEvent.offsetX, e.nativeEvent.offsetY)
+    } catch {
+      /* setDragImage unsupported — fall back to the default drag image */
+    }
   }
 
   const handleDrop = (e, statusName) => {
@@ -70,7 +89,9 @@ export function TaskKanbanBoard({ tasks, statuses, onMove, onCardClick }) {
           onDragLeave={col.droppable ? () => setDragOverCol(null) : undefined}
           onDrop={col.droppable ? (e) => handleDrop(e, col.name) : undefined}
           className={cn(
-            'flex w-72 shrink-0 flex-col rounded-xl border border-border bg-muted/30 p-3',
+            // Columns flex to fill the whole screen width; min-width keeps them usable and lets the row
+            // scroll horizontally only when there are too many statuses to fit.
+            'flex min-w-[15rem] flex-1 flex-col rounded-xl border border-border bg-muted/30 p-3',
             dragOverCol === col.key && 'border-primary bg-primary/5'
           )}
         >

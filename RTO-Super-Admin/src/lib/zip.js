@@ -12,12 +12,12 @@ function todayStr() {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
 }
 
-function extOf(name, fallback) {
+export function extOf(name, fallback) {
   const m = /\.([a-z0-9]+)$/i.exec(name ?? '')
   return m ? m[1] : fallback
 }
 
-function downloadBlob(blob, filename) {
+export function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url

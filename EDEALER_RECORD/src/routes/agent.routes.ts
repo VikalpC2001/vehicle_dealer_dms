@@ -22,6 +22,8 @@ import {
 } from '../validations/agent.validation';
 import { setAgentSubscriptionHandler } from '../controllers/subscription.controller';
 import { setSubscriptionSchema } from '../validations/subscription.validation';
+import { setAgentAccessHandler } from '../controllers/firm-access.controller';
+import { setFirmAccessSchema } from '../validations/firm-access.validation';
 
 const router = Router();
 
@@ -70,6 +72,13 @@ router.patch(
   '/:id/subscription',
   validate(setSubscriptionSchema),
   asyncHandler(setAgentSubscriptionHandler),
+);
+
+/** Super-admin: pause/resume an agent's access (paused = no sign-in, live sessions rejected). */
+router.patch(
+  '/:id/access',
+  validate(setFirmAccessSchema),
+  asyncHandler(setAgentAccessHandler),
 );
 
 router.delete(

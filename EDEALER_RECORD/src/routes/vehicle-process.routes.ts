@@ -15,13 +15,22 @@ import {
   deleteVehicleProcessReceiptHandler,
   setVehicleProcessTrackingHandler,
   setVehicleProcessStatusHandler,
+  setVehicleProcessSoldDateHandler,
   setVehicleProcessTagsHandler,
   deleteVehicleProcessHandler,
+  restoreVehicleProcessHandler,
+  permanentlyDeleteVehicleProcessHandler,
+  bulkRestoreProcessesHandler,
+  bulkPermanentlyDeleteProcessesHandler,
+  listBinProcessesHandler,
+  listAgentBinProcessesHandler,
 } from '../controllers/vehicle-process.controller';
 import {
   createVehicleProcessSchema,
   startVehicleProcessWithVehicleSchema,
   listVehicleProcessesSchema,
+  listBinProcessesSchema,
+  bulkBinActionSchema,
   getVehicleProcessByIdSchema,
   getVehicleProcessDetailsSchema,
   updateVehicleProcessSchema,
@@ -29,8 +38,11 @@ import {
   setVehicleProcessReceiptSchema,
   setVehicleProcessTrackingSchema,
   setVehicleProcessStatusSchema,
+  setVehicleProcessSoldDateSchema,
   setVehicleProcessTagsSchema,
 } from '../validations/vehicle-process.validation';
+import { exportProcessesHandler } from '../controllers/process-export.controller';
+import { exportProcessesSchema } from '../validations/process-export.validation';
 import {
   listProcessCommentsHandler,
   createProcessCommentHandler,
@@ -57,8 +69,25 @@ router.post(
 
 router.post('/', validate(createVehicleProcessSchema), asyncHandler(createVehicleProcessHandler));
 router.get('/', validate(listVehicleProcessesSchema), asyncHandler(listVehicleProcessesHandler));
-// Literal path — must precede `/:id` so it is not captured as an id.
+// Literal paths — must precede `/:id` so they are not captured as an id.
 router.get('/agent-board', asyncHandler(listAgentBoardProcessesHandler));
+// Export the dealer's processes over a date range as an Excel/PDF file (streams a binary download).
+router.get('/export', validate(exportProcessesSchema), asyncHandler(exportProcessesHandler));
+// Recycle bin: soft-deleted processes (auto-purged 7 days after deletion).
+router.get('/bin', validate(listBinProcessesSchema), asyncHandler(listBinProcessesHandler));
+// Agent-global recycle bin: the caller agent's binned processes across all placeholder dealers they own.
+router.get('/agent-bin', validate(listBinProcessesSchema), asyncHandler(listAgentBinProcessesHandler));
+// Bulk (multi-select) bin actions — literal `/bin/*` paths, kept before `/:id` so they aren't captured.
+router.post(
+  '/bin/restore',
+  validate(bulkBinActionSchema),
+  asyncHandler(bulkRestoreProcessesHandler),
+);
+router.post(
+  '/bin/permanent-delete',
+  validate(bulkBinActionSchema),
+  asyncHandler(bulkPermanentlyDeleteProcessesHandler),
+);
 router.get(
   '/:id/details',
   validate(getVehicleProcessDetailsSchema),
@@ -92,6 +121,12 @@ router.patch(
   validate(setVehicleProcessStatusSchema),
   asyncHandler(setVehicleProcessStatusHandler),
 );
+// Edit the recorded sold date of a sold process.
+router.patch(
+  '/:id/sold-date',
+  validate(setVehicleProcessSoldDateSchema),
+  asyncHandler(setVehicleProcessSoldDateHandler),
+);
 // Full-replace the process's tags (Finder-style labels).
 router.put(
   '/:id/tags',
@@ -99,7 +134,18 @@ router.put(
   asyncHandler(setVehicleProcessTagsHandler),
 );
 router.patch('/:id', validate(updateVehicleProcessSchema), asyncHandler(updateVehicleProcessHandler));
+// Soft delete → recycle bin (kept 7 days). Restore, or permanently hard-delete, a binned process.
 router.delete('/:id', validate(getVehicleProcessByIdSchema), asyncHandler(deleteVehicleProcessHandler));
+router.post(
+  '/:id/restore',
+  validate(getVehicleProcessByIdSchema),
+  asyncHandler(restoreVehicleProcessHandler),
+);
+router.delete(
+  '/:id/permanent',
+  validate(getVehicleProcessByIdSchema),
+  asyncHandler(permanentlyDeleteVehicleProcessHandler),
+);
 
 // Shared, per-process comment thread (dealer owner ↔ assigned/managing agent).
 router.get(

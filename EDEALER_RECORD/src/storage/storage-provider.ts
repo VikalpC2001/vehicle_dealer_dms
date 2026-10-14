@@ -47,4 +47,41 @@ export interface StorageProvider {
    * @param fileKey - Object key to probe.
    */
   fileExists(fileKey: string): Promise<boolean>;
+
+  /**
+   * Reads the raw bytes of the object at `key` (which may include a per-process folder segment).
+   * Used by server-side export to embed stored images into Excel/PDF. Rejects when the object is
+   * missing or the key escapes the storage root; callers that treat a read as best-effort should
+   * catch and skip.
+   *
+   * @param key - Object key to read.
+   */
+  readFile(key: string): Promise<Buffer>;
+
+  /**
+   * Removes the object at the given key. Implementations must treat a missing object as success
+   * (idempotent delete) so callers can clean up bytes after a DB row is removed without racing.
+   *
+   * @param key - Object key to delete.
+   */
+  deleteFile(key: string): Promise<void>;
+
+  /**
+   * Recursively removes the folder (and every object under it) identified by `prefix` — used to
+   * clean up a process's whole per-process upload folder after its DB row is permanently deleted.
+   * Idempotent: a missing folder is a success (so callers can clean up without racing a purge).
+   *
+   * @param prefix - Folder prefix (no trailing slash), e.g. `"{registration}_{processId}"`.
+   */
+  deleteFolder(prefix: string): Promise<void>;
+
+  /**
+   * Lists ONLY the top-level upload files in the storage root — bare object keys with no subfolder
+   * segment, excluding dotfiles. Used by the orphan-root-upload sweep to find flat-uploaded files that
+   * were never moved into a per-process folder. Each entry carries the object's last-modified time so
+   * the sweep can apply a retention window.
+   *
+   * @returns Top-level files as `{ key, lastModified }` (empty when the root does not exist yet).
+   */
+  listRootFiles(): Promise<Array<{ key: string; lastModified: Date }>>;
 }

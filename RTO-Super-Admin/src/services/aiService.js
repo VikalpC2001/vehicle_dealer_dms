@@ -6,6 +6,10 @@ import { AI_ERROR_MESSAGES } from '@/lib/vehicleProcess'
 // Bearer interceptors must not apply.
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://192.168.0.119:4002/api/v1'
 
+// Cap OCR calls so a stalled Gemini request can't hang the scan overlay forever — on timeout the
+// request rejects and the caller falls back to manual entry.
+const OCR_TIMEOUT_MS = 45000
+
 /** Maps a backend AI error to a friendly, user-facing message. OCR errors are non-fatal. */
 export function getAiErrorMessage(error) {
   const code = error?.response?.data?.code
@@ -16,7 +20,7 @@ export function getAiErrorMessage(error) {
 async function postImage(path, file) {
   const formData = new FormData()
   formData.append('image', file)
-  const { data } = await axios.post(`${API_BASE_URL}${path}`, formData)
+  const { data } = await axios.post(`${API_BASE_URL}${path}`, formData, { timeout: OCR_TIMEOUT_MS })
   // AI responses are { success, data: {...} }.
   return data?.data ?? data
 }
@@ -35,8 +39,8 @@ function resolveProcessApiUrl(processApi) {
 
 export const aiService = {
   /**
-   * POST /ai/analyze-image — extract vehicle + owner fields from a Registration
-   * Certificate image. Returns { vehicleInfo, ownerInfo }.
+   * POST /ai/analyze-image — extract vehicle + owner fields from a Registration Certificate image.
+   * Backend sends the image directly to Gemini vision. Returns { vehicleInfo, ownerInfo }.
    *
    * @param {File} file
    */
@@ -45,8 +49,8 @@ export const aiService = {
   },
 
   /**
-   * POST /ai/analyze-id-proof — extract name/address from an owner ID image.
-   * Returns { fullName, address, city, state, pincode }.
+   * POST /ai/analyze-id-proof — extract name/address from an owner ID image. Backend sends the image
+   * directly to Gemini vision. Returns { fullName, address, city, state, pincode }.
    *
    * @param {File} file
    */
@@ -64,7 +68,7 @@ export const aiService = {
   async extractViaProcessApi(processApi, file) {
     const formData = new FormData()
     formData.append('image', file)
-    const { data } = await axios.post(resolveProcessApiUrl(processApi), formData)
+    const { data } = await axios.post(resolveProcessApiUrl(processApi), formData, { timeout: OCR_TIMEOUT_MS })
     return data?.data ?? data
   },
 }

@@ -6,6 +6,7 @@ import {
   listProcessUploadPhotosByProcess,
   getProcessUploadPhotoById,
   updateProcessUploadPhoto,
+  setStarredVehiclePhoto,
   deleteProcessUploadPhoto,
 } from '../services/process-upload-photo.service';
 import { sendSuccess } from '../utils/api-response';
@@ -73,6 +74,17 @@ export async function updateProcessUploadPhotoHandler(req: Request, res: Respons
   const dealerId = await resolveManagedDealerId(req, q.dealerId, { gateSubscription: false });
   const row = await updateProcessUploadPhoto(dealerId, id, body);
   sendSuccess(res, 'Process upload photo updated', row);
+}
+
+/**
+ * PATCH /process-upload-photos/:id/star
+ */
+export async function setStarredVehiclePhotoHandler(req: Request, res: Response): Promise<void> {
+  const { id } = req.params as unknown as ProcessUploadPhotoIdParams;
+  const q = req.query as { dealerId?: string };
+  const dealerId = await resolveManagedDealerId(req, q.dealerId, { gateSubscription: false });
+  const row = await setStarredVehiclePhoto(dealerId, id);
+  sendSuccess(res, 'Vehicle photo starred', row);
 }
 
 /**

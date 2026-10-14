@@ -214,6 +214,9 @@ model Dealer {
   displayName       String   @map("display_name") @db.VarChar(255)
   whatsappNo        String?  @unique @map("whatsapp_no") @db.VarChar(20)
   isSubscribe       Boolean  @default(false) @map("is_subscribe")
+  // Super-admin access switch. Defaults true so every existing dealer stays open; false = PAUSED:
+  // the dealer's login users cannot sign in and live sessions are rejected (403/4022).
+  isActive          Boolean  @default(true) @map("is_active")
   // Self-registration approval gate. Defaults APPROVED so admin-created dealers stay open; a public
   // self-registration sets PENDING and is blocked from the app until a super-admin approves.
   approvalStatus    ApprovalStatus @default(APPROVED) @map("approval_status")
@@ -267,6 +270,8 @@ model Agent {
   displayName String   @map("display_name") @db.VarChar(255)
   whatsappNo  String?  @unique @map("whatsapp_no") @db.VarChar(20)
   isSubscribe Boolean  @default(false) @map("is_subscribe")
+  // Super-admin access switch (see Dealer.isActive). Defaults true; false = PAUSED (403/4022).
+  isActive    Boolean  @default(true) @map("is_active")
   // Self-registration approval gate (see Dealer.approvalStatus). Defaults APPROVED.
   approvalStatus ApprovalStatus @default(APPROVED) @map("approval_status")
   approvalReason String?  @map("approval_reason") @db.Text
@@ -697,6 +702,16 @@ model VehicleProcess {
   // Fixed lifecycle status (Sold/Complete/Scrap); null = open (unset). At most one open process per
   // vehicle per dealer — enforced in the create service, not by a DB constraint (null-scoped uniqueness).
   status            VehicleProcessStatus? @map("status")
+  // Optional human-facing deal/reference number captured at creation (free-text, ≤100 chars).
+  dealNumber        String?   @map("deal_number") @db.VarChar(100)
+  // Timestamp the process was first marked SOLD (preserved through a later COMPLETE); null until sold.
+  soldDate          DateTime? @map("sold_date") @db.Timestamp(6)
+  // Timestamp the active buyer was last REPLACED (change-buyer); null until a buyer is changed.
+  buyerChangedAt    DateTime? @map("buyer_changed_at") @db.Timestamp(6)
+  // Soft-delete: set when the process is moved to the Bin; null = active. Children (persons, docs,
+  // photos, tasks, expenses, tags, …) ride along hidden and return intact on restore. Purged (hard
+  // cascade delete) 7 days after deletion. All active-process queries must filter `deletedAt: null`.
+  deletedAt         DateTime? @map("deleted_at") @db.Timestamp(6)
   createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamp(6)
   updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamp(6)
 
@@ -715,6 +730,7 @@ model VehicleProcess {
 
   @@index([vehicleId])
   @@index([agentStatusId])
+  @@index([dealerId, deletedAt])
   @@map("vehicle_process")
 }
 
@@ -770,11 +786,23 @@ model ProcessUploadImage {
 }
 
 /// Named photo entry for a vehicle process (category + file/display name; no URL stored here).
+/// Distinguishes a process's uploaded images: DOCUMENT = RC/PUC/Insurance/ID + free-text "other
+/// documents" (shown in the Documents tab); VEHICLE = vehicle photos (shown in the Vehicle Photos tab,
+/// capped per process). Defaults to DOCUMENT so existing rows stay documents.
+enum ProcessPhotoKind {
+  DOCUMENT
+  VEHICLE
+}
+
 model ProcessUploadPhoto {
   processUploadPhotoId String   @id @default(dbgenerated("gen_random_uuid()")) @map("process_upload_photo_id") @db.Uuid
   processId            String   @map("process_id") @db.Uuid
   category             String   @map("category") @db.VarChar(255)
   imageName            String   @map("image_name") @db.VarChar(255)
+  kind                 ProcessPhotoKind @default(DOCUMENT) @map("kind")
+  // At most one starred VEHICLE-kind photo per process (the primary/profile photo). The first vehicle
+  // photo is auto-starred; deleting the starred one promotes the oldest remaining vehicle photo.
+  isStarred            Boolean  @default(false) @map("is_starred")
   // Optional owner person — set for a buyer's ID-proof photo so it travels with that buyer (a
   // cancelled buyer's ID stays viewable under them). Nulled if the person is removed.
   personId             String?  @map("person_id") @db.Uuid
@@ -885,7 +913,7 @@ model ProcessReference {
   createdAt          DateTime       @default(now()) @map("created_at") @db.Timestamp(6)
   updatedAt          DateTime       @updatedAt @map("updated_at") @db.Timestamp(6)
 
-  process   VehicleProcess?  @relation(fields: [processId], references: [processId])
+  process   VehicleProcess?  @relation(fields: [processId], references: [processId], onDelete: Cascade)
   reference DealerReference? @relation(fields: [referenceId], references: [referenceId])
   dealer    Dealer?          @relation(fields: [dealerId], references: [dealerId])
 

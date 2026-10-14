@@ -266,6 +266,16 @@ export function assembleStartPayload(values, uploadedPhotos = []) {
   if (v.buyerReferenceId) processReferences.push({ referenceId: v.buyerReferenceId, referenceType: 'BUY' })
   payload.processReferences = processReferences
 
+  // Fixed lifecycle status — include ONLY a terminal value (SOLD/COMPLETE/SCRAP). Omit when null/Open
+  // so the backend creates an OPEN (status-less) process.
+  if (v.status === 'SOLD' || v.status === 'COMPLETE' || v.status === 'SCRAP') {
+    payload.status = v.status
+  }
+
+  // Optional free-text deal number — include only when non-empty.
+  const dealNumber = (v.dealNumber ?? '').trim()
+  if (dealNumber) payload.dealNumber = dealNumber
+
   return payload
 }
 

@@ -1,9 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
-import { ChevronLeft, ChevronRight, ExternalLink, FileText, X } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Download, ExternalLink, FileText, Loader2, Printer, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { toAppImageUrl, isPdfUrl } from '@/lib/vehicleProcess'
+import { printDocument } from '@/lib/printShare'
+import { downloadFileFromUrl, extOf } from '@/lib/zip'
+import { toast } from '@/hooks/use-toast'
 
 /** Horizontal slide+fade keyed on nav direction (next → new enters from the right, and vice-versa). */
 const slideVariants = {
@@ -28,6 +31,8 @@ const slideVariants = {
 export function PhotoGalleryDialog({ open, onOpenChange, photos = [], index = 0, onIndexChange = () => {} }) {
   const reduce = useReducedMotion()
   const [direction, setDirection] = useState(0)
+  const [printing, setPrinting] = useState(false)
+  const [downloading, setDownloading] = useState(false)
   const activeThumbRef = useRef(null)
   const containerRef = useRef(null)
   const restoreRef = useRef(null)
@@ -108,6 +113,34 @@ export function PhotoGalleryDialog({ open, onOpenChange, photos = [], index = 0,
   const pdf = current ? isPdfUrl(current.photoUrl) : false
   const label = current?.category || 'Document'
 
+  const handlePrint = async () => {
+    if (!current) return
+    setPrinting(true)
+    try {
+      await printDocument({ photoUrl: current.photoUrl, imageName: current.imageName })
+    } catch (err) {
+      toast({ title: 'Could not print', description: err.message, variant: 'destructive' })
+    } finally {
+      setPrinting(false)
+    }
+  }
+
+  const handleDownload = async () => {
+    if (!current) return
+    setDownloading(true)
+    try {
+      const base =
+        String(current.category || current.imageName || 'document')
+          .replace(/\.[^.]+$/, '')
+          .replace(/[\\/:*?"<>|]+/g, '-') || 'document'
+      await downloadFileFromUrl(current.photoUrl, `${base}.${extOf(current.imageName, pdf ? 'pdf' : 'jpg')}`)
+    } catch (err) {
+      toast({ title: 'Could not download', description: err.message, variant: 'destructive' })
+    } finally {
+      setDownloading(false)
+    }
+  }
+
   return createPortal(
     <AnimatePresence>
       {open && (
@@ -130,6 +163,28 @@ export function PhotoGalleryDialog({ open, onOpenChange, photos = [], index = 0,
               {count > 1 && <span className="ml-2 text-white/60">{safeIndex + 1} / {count}</span>}
             </div>
             <div className="flex items-center gap-1">
+              {src && (
+                <button
+                  type="button"
+                  onClick={handlePrint}
+                  disabled={printing}
+                  className="rounded-md p-2 text-white/80 transition hover:bg-white/10 hover:text-white disabled:opacity-50"
+                  aria-label="Print document"
+                >
+                  {printing ? <Loader2 className="h-5 w-5 animate-spin" /> : <Printer className="h-5 w-5" />}
+                </button>
+              )}
+              {src && (
+                <button
+                  type="button"
+                  onClick={handleDownload}
+                  disabled={downloading}
+                  className="rounded-md p-2 text-white/80 transition hover:bg-white/10 hover:text-white disabled:opacity-50"
+                  aria-label="Download document"
+                >
+                  {downloading ? <Loader2 className="h-5 w-5 animate-spin" /> : <Download className="h-5 w-5" />}
+                </button>
+              )}
               {src && (
                 <a
                   href={src}

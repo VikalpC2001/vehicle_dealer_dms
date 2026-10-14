@@ -61,4 +61,10 @@ export const dealerService = {
     const { data } = await api.patch(`/dealers/${id}/subscription`, { isSubscribe })
     return unwrap(data) // { id, isSubscribe }
   },
+
+  /** PATCH /dealers/:id/access — super-admin pauses (`false`) or resumes (`true`) the dealer's access. */
+  async setAccess(id, isActive) {
+    const { data } = await api.patch(`/dealers/${id}/access`, { isActive })
+    return unwrap(data) // { id, isActive }
+  },
 }

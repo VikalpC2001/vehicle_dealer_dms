@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useForm, FormProvider } from 'react-hook-form'
+import { zodResolver } from '@hookform/resolvers/zod'
 import { useQuery } from '@tanstack/react-query'
 import { Loader2, ArrowLeft, ArrowRight, Check } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -9,7 +11,7 @@ import { agentWiseUploadCategoryService } from '@/services/agentWiseUploadCatego
 import { dealerReferenceService } from '@/services/dealerReferenceService'
 import { uploadService, validateImageFile } from '@/services/uploadService'
 import { aiService, getAiErrorMessage } from '@/services/aiService'
-import { collageVertical } from '@/lib/image'
+import { collageVertical, downscaleImage } from '@/lib/image'
 import {
   assembleStartPayload,
   isRcCategory,
@@ -18,18 +20,50 @@ import {
   mapRcOcrToForm,
   mapIdProofToPerson,
 } from '@/lib/vehicleProcess'
+import { vehicleProcessSchema, defaultVehicleProcessValues } from '@/lib/vehicleProcessForm'
 import { StepUploadDocuments } from './StepUploadDocuments'
-import { StepVerifyDetails, defaultVehicleProcessValues } from './StepVerifyDetails'
+import { StepVerifyVehicle } from './StepVerifyVehicle'
+import { StepPersons } from './StepPersons'
+import { StepReferencesPrices } from './StepReferencesPrices'
+import { StepStatus } from './StepStatus'
 import { StepReviewSubmit } from './StepReviewSubmit'
 import { ImageCropperDialog } from './ImageCropperDialog'
+import { ScanDocumentDialog } from './ScanDocumentDialog'
 
 const STEPS = [
-  { label: 'Documents', description: 'Upload & scan' },
-  { label: 'Verify', description: 'Confirm details' },
-  { label: 'Review', description: 'Submit' },
+  { label: 'Documents' },
+  { label: 'Vehicle' },
+  { label: 'Seller & Buyer' },
+  { label: 'References & Price' },
+  { label: 'Status' },
+  { label: 'Review' },
 ]
 
-const VERIFY_FORM_ID = 'vehicle-process-verify-form'
+// 0-based step indices.
+const STEP_DOCUMENTS = 0
+const STEP_VEHICLE = 1
+const STEP_PERSONS = 2
+const STEP_REFS_PRICE = 3
+const STEP_STATUS = 4
+const STEP_REVIEW = 5
+
+// Fields validated with `trigger()` when leaving each step. Buyer fields are injected only when the
+// buyer block is shown; step-4 fields are all optional so their trigger always passes.
+const VEHICLE_FIELDS = [
+  'registrationNumber',
+  'registrationDate',
+  'make',
+  'model',
+  'chassisNumber',
+  'engineNumber',
+  'vehicleType',
+  'manufactureMonth',
+  'manufactureYear',
+]
+const SELLER_FIELDS = ['sellerName', 'sellerMobile', 'sellerAddress']
+const BUYER_FIELDS = ['buyerName', 'buyerMobile', 'buyerAddress']
+const REFS_PRICE_FIELDS = ['purchasePrice', 'salePrice', 'sellerReferenceId', 'buyerReferenceId']
+const STATUS_FIELDS = ['status', 'dealNumber']
 
 /** Keeps only non-empty values from an OCR mapping. */
 function nonEmpty(obj) {
@@ -54,7 +88,14 @@ export function VehicleProcessWizard({ onSubmit, submitting, onCancel, categoryS
   const [cropper, setCropper] = useState(null) // { categoryId, side, file, fileName }
   const [ocrPrefill, setOcrPrefill] = useState({})
   const [ocrStatus, setOcrStatus] = useState('idle')
-  const [verifyValues, setVerifyValues] = useState(null)
+  const [scanGateOpen, setScanGateOpen] = useState(false) // "scanning…" popup when Next is hit mid-OCR
+
+  // ONE react-hook-form spanning steps 2–5 (Vehicle → Seller & Buyer → References & Price → Status).
+  const methods = useForm({
+    resolver: zodResolver(vehicleProcessSchema),
+    defaultValues: defaultVehicleProcessValues,
+  })
+  const { reset: resetForm } = methods
 
   const slotsRef = useRef(slots)
   useEffect(() => {
@@ -85,7 +126,32 @@ export function VehicleProcessWizard({ onSubmit, submitting, onCancel, categoryS
     return map
   }, [categories])
 
-  const hasBuyerIdCategory = useMemo(() => categories.some(isBuyerIdCategory), [categories])
+  // True only when a Buyer-ID document has actually been UPLOADED in step 1 — not merely when the
+  // checklist configures a buyer-ID category. Used to tailor the step-3 helper text and to keep
+  // addBuyer set for a buyer whose ID is already captured.
+  const buyerIdUploaded = useMemo(
+    () => categories.some((c) => isBuyerIdCategory(c) && slots[c.categoryId]?.status === 'uploaded'),
+    [categories, slots]
+  )
+
+  // Seed the form from OCR without clobbering user edits — RC autofill fills empty vehicle/seller/
+  // buyer fields before the user reaches step 2; fields the user already touched are kept.
+  useEffect(() => {
+    resetForm({ ...defaultVehicleProcessValues, ...ocrPrefill }, { keepDirtyValues: true })
+  }, [ocrPrefill, resetForm])
+
+  // Fields validated when leaving each step. The buyer block is always shown now (a buyer can be
+  // added in step 3 even without a step-1 ID), so buyer fields are always validated — they're optional
+  // unless partially filled (the schema's superRefine requires name + mobile together).
+  const fieldsForStep = useMemo(
+    () => ({
+      [STEP_VEHICLE]: VEHICLE_FIELDS,
+      [STEP_PERSONS]: [...SELLER_FIELDS, ...BUYER_FIELDS],
+      [STEP_REFS_PRICE]: REFS_PRICE_FIELDS,
+      [STEP_STATUS]: STATUS_FIELDS,
+    }),
+    []
+  )
 
   // Revoke all object URLs on unmount.
   useEffect(() => {
@@ -115,9 +181,11 @@ export function VehicleProcessWizard({ onSubmit, submitting, onCancel, categoryS
     if (isRcCategory(category)) {
       // Use the category's processApi when configured; otherwise the built-in RC reader.
       setOcrStatus('running')
+      // Built-in RC reader → downscale → /ai/analyze-image (backend sends the image to Gemini vision).
+      // Downscaling cuts image tokens (cost); vision reads the glyph directly for accuracy.
       const extract = category.processApi
         ? aiService.extractViaProcessApi(category.processApi, file)
-        : aiService.analyzeImage(file)
+        : downscaleImage(file, 2000).then((small) => aiService.analyzeImage(small))
       extract
         .then((data) => {
           setOcrPrefill((prev) => ({ ...prev, ...nonEmpty(mapRcOcrToForm(data)) }))
@@ -166,8 +234,9 @@ export function VehicleProcessWizard({ onSubmit, submitting, onCancel, categoryS
   const uploadCombined = (category, frontFile, backFile) => {
     const categoryId = category.categoryId
     updateSlot(categoryId, { status: 'uploading', error: null })
-    collageVertical(frontFile, backFile, `${category.categoryName}.jpg`)
+    collageVertical(frontFile, backFile, `${category.categoryName}.webp`)
       .then((collageFile) => {
+        if (!collageFile) throw new Error('Could not process the document image.')
         const previewUrl = URL.createObjectURL(collageFile)
         const prevPreview = slotsRef.current[categoryId]?.previewUrl
         if (prevPreview) URL.revokeObjectURL(prevPreview)
@@ -226,7 +295,7 @@ export function VehicleProcessWizard({ onSubmit, submitting, onCancel, categoryS
       uploadPdf(categoryId, category, rawFile)
       return
     }
-    setCropper({ categoryId, side, file: rawFile, fileName: `${category.categoryName}-${side}.jpg` })
+    setCropper({ categoryId, side, file: rawFile, fileName: `${category.categoryName}-${side}.webp` })
   }
 
   const handleCropped = (croppedFile) => {
@@ -243,6 +312,9 @@ export function VehicleProcessWizard({ onSubmit, submitting, onCancel, categoryS
       categoryId,
       category: category.categoryName,
       bothSide: category.bothSide,
+      // A cropped image is never a PDF — clear any stale PDF flag left by a prior PDF upload+cancel,
+      // otherwise the tile would keep showing the PDF placeholder instead of this image.
+      isPdf: false,
       [side]: sideObj,
       error: null,
     }
@@ -292,6 +364,8 @@ export function VehicleProcessWizard({ onSubmit, submitting, onCancel, categoryS
       slot.fileKey = null
       slot.status = 'idle'
       slot.error = null
+      // Reset the slot's type on cancel so a later re-upload (image OR PDF) starts clean.
+      slot.isPdf = false
       return { ...prev, [categoryId]: slot }
     })
   }
@@ -313,13 +387,43 @@ export function VehicleProcessWizard({ onSubmit, submitting, onCancel, categoryS
     [categories, slots]
   )
 
-  const handleVerifySubmit = (values) => {
-    setVerifyValues(values)
-    setStep(2)
+  // Leaving step 1 (Documents): if OCR already succeeded/idle, go straight to step 2. If it's still
+  // running (or failed), open the scanning popup — it auto-advances on success (effect below) or offers
+  // manual entry on failure.
+  const handleDocumentsNext = () => {
+    if (ocrStatus === 'running' || ocrStatus === 'failed') {
+      setScanGateOpen(true)
+      return
+    }
+    setStep(STEP_VEHICLE)
+  }
+
+  // While the scanning popup is open, auto-advance the moment OCR finishes successfully.
+  useEffect(() => {
+    if (scanGateOpen && ocrStatus === 'done') {
+      setScanGateOpen(false)
+      setStep(STEP_VEHICLE)
+    }
+  }, [scanGateOpen, ocrStatus])
+
+  // Proceed to step 2 for manual entry (scanning popup's manual option / dismissal).
+  const proceedManually = () => {
+    setScanGateOpen(false)
+    setStep(STEP_VEHICLE)
+  }
+
+  // Advance to the next step, validating the current step's fields first (optional steps pass).
+  const handleNext = async () => {
+    const fields = fieldsForStep[step]
+    if (fields && fields.length > 0) {
+      const ok = await methods.trigger(fields)
+      if (!ok) return
+    }
+    setStep((s) => s + 1)
   }
 
   const handleConfirm = async () => {
-    const payload = assembleStartPayload(verifyValues, Object.values(slots))
+    const payload = assembleStartPayload(methods.getValues(), Object.values(slots))
     try {
       await onSubmit(payload)
     } catch {
@@ -328,14 +432,12 @@ export function VehicleProcessWizard({ onSubmit, submitting, onCancel, categoryS
     }
   }
 
-  const verifyDefaults = { ...defaultVehicleProcessValues, ...ocrPrefill, ...(verifyValues ?? {}) }
-
   return (
     <div className="space-y-6">
       <Stepper steps={STEPS} current={step} completed={Array.from({ length: step }, (_, i) => i)} />
 
       <div className="min-h-[300px]">
-        {step === 0 && (
+        {step === STEP_DOCUMENTS && (
           <StepUploadDocuments
             categories={categories}
             slots={slots}
@@ -348,22 +450,21 @@ export function VehicleProcessWizard({ onSubmit, submitting, onCancel, categoryS
             onToggleSingle={handleToggleSingle}
           />
         )}
-        {step === 1 && (
-          <StepVerifyDetails
-            formId={VERIFY_FORM_ID}
-            defaultValues={verifyDefaults}
-            references={references}
-            buyerIdInStep1={hasBuyerIdCategory}
-            onSubmit={handleVerifySubmit}
-          />
+        {step > STEP_DOCUMENTS && step < STEP_REVIEW && (
+          <FormProvider {...methods}>
+            {step === STEP_VEHICLE && <StepVerifyVehicle />}
+            {step === STEP_PERSONS && <StepPersons buyerIdUploaded={buyerIdUploaded} />}
+            {step === STEP_REFS_PRICE && <StepReferencesPrices references={references} />}
+            {step === STEP_STATUS && <StepStatus allowStatus={categorySource !== 'agent'} />}
+          </FormProvider>
         )}
-        {step === 2 && (
-          <StepReviewSubmit values={verifyValues ?? {}} slots={slots} references={references} />
+        {step === STEP_REVIEW && (
+          <StepReviewSubmit values={methods.getValues()} slots={slots} references={references} />
         )}
       </div>
 
-      <div className="flex items-center justify-between border-t border-border pt-4">
-        {step === 0 ? (
+      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
+        {step === STEP_DOCUMENTS ? (
           <Button variant="ghost" onClick={onCancel} disabled={submitting}>
             Cancel
           </Button>
@@ -373,29 +474,31 @@ export function VehicleProcessWizard({ onSubmit, submitting, onCancel, categoryS
           </Button>
         )}
 
-        {step === 0 && (
-          <Button
-            onClick={() => setStep(1)}
-            disabled={anyUploading || !requiredComplete}
-            title={!requiredComplete ? 'Upload all required documents to continue' : undefined}
-          >
-            Next <ArrowRight className="ml-2 h-4 w-4" />
-          </Button>
-        )}
-        {step === 1 && (
-          <Button type="submit" form={VERIFY_FORM_ID}>
-            Continue <ArrowRight className="ml-2 h-4 w-4" />
-          </Button>
-        )}
-        {step === 2 && (
-          <Button onClick={handleConfirm} disabled={submitting}>
-            {submitting ? (
-              <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Creating…</>
-            ) : (
-              <><Check className="mr-2 h-4 w-4" /> Create Process</>
-            )}
-          </Button>
-        )}
+        <div className="flex flex-wrap items-center gap-2">
+          {step === STEP_DOCUMENTS && (
+            <Button
+              onClick={handleDocumentsNext}
+              disabled={anyUploading || !requiredComplete}
+              title={!requiredComplete ? 'Upload all required documents to continue' : undefined}
+            >
+              Next <ArrowRight className="ml-2 h-4 w-4" />
+            </Button>
+          )}
+          {step >= STEP_VEHICLE && step <= STEP_STATUS && (
+            <Button onClick={handleNext}>
+              Next <ArrowRight className="ml-2 h-4 w-4" />
+            </Button>
+          )}
+          {step === STEP_REVIEW && (
+            <Button onClick={handleConfirm} disabled={submitting}>
+              {submitting ? (
+                <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Creating…</>
+              ) : (
+                <><Check className="mr-2 h-4 w-4" /> Create Process</>
+              )}
+            </Button>
+          )}
+        </div>
       </div>
 
       <ImageCropperDialog
@@ -405,6 +508,8 @@ export function VehicleProcessWizard({ onSubmit, submitting, onCancel, categoryS
         onCancel={() => setCropper(null)}
         onCropped={handleCropped}
       />
+
+      <ScanDocumentDialog open={scanGateOpen} status={ocrStatus} onManual={proceedManually} />
     </div>
   )
 }

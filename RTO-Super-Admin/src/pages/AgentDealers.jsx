@@ -313,7 +313,7 @@ function ConnectDialog({ target, onOpenChange, value, onValueChange, onConfirm, 
           ) : options.length === 0 ? (
             <p className="text-sm text-muted-foreground">No subscribed dealers available to connect.</p>
           ) : (
-            <Select value={value || undefined} onValueChange={onValueChange}>
+            <Select value={value ?? ''} onValueChange={onValueChange}>
               <SelectTrigger id="realDealer">
                 <SelectValue placeholder="Select a dealer" />
               </SelectTrigger>

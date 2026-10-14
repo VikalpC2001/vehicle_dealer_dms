@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
+import { CheckCheck } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
@@ -98,7 +101,9 @@ export default function TaskBoard() {
       if (ctx?.previous) queryClient.setQueryData(boardKey, ctx.previous)
       toast({ title: 'Could not move task', description: getErrorMessage(err), variant: 'destructive' })
     },
-    onSettled: () => queryClient.invalidateQueries({ queryKey: ['process-tasks', 'board'] }),
+    // Broad prefix so the change also reaches the per-process tasks panel (['process-tasks', processId])
+    // and the ticket dialog (['process-tasks', 'by-process', …]) on the vehicle details page, not just the board.
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ['process-tasks'] }),
   })
 
   const handleMove = (card, statusName) => {
@@ -136,6 +141,12 @@ export default function TaskBoard() {
             <Switch checked={mine} onCheckedChange={setMine} aria-label="My tasks" />
             My tasks
           </label>
+
+          <Button variant="outline" asChild>
+            <Link to="/dealer/tasks/history">
+              <CheckCheck className="mr-2 h-4 w-4" /> Task History
+            </Link>
+          </Button>
 
           <NewTaskButton />
         </div>

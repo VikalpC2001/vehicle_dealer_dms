@@ -7,6 +7,7 @@ import * as emailOtpRepository from '../repositories/email-otp.repository';
 import * as userRepository from '../repositories/user.repository';
 import { Role } from '../types';
 import { AppError } from '../utils/app-error';
+import { renderEmailHtml } from '../utils/email-template';
 import { signPasswordResetToken } from '../utils/jwt';
 import { issueUserAccessToken } from './access-token.service';
 
@@ -36,16 +37,15 @@ export const hashOtp = (email: string, purpose: OtpPurpose, plainOtp: string): s
  * Sends signup verification OTP email.
  */
 export const sendSignupOtpEmail = async (user: User, plainOtp: string): Promise<void> => {
-  const subject = 'Verify your email — EDealer';
-  const text = [
-    `Hello ${user.userName},`,
-    '',
-    `Your verification code is: ${plainOtp}`,
-    `This code expires in ${config.OTP_EXPIRES_MINUTES} minutes.`,
-    '',
-    'If you did not create an account, ignore this email.',
-  ].join('\n');
-  const html = `<p>Hello ${user.userName},</p><p>Your verification code is: <strong>${plainOtp}</strong></p><p>This code expires in ${config.OTP_EXPIRES_MINUTES} minutes.</p>`;
+  const subject = `Verify your email — ${config.APP_NAME}`;
+  const text = `Your verification code is ${plainOtp}. It expires in ${config.OTP_EXPIRES_MINUTES} minutes.`;
+  const html = renderEmailHtml({
+    preheader: 'Use this code to verify your email.',
+    title: 'Verify your email',
+    message: 'Enter this code to finish setting up your account.',
+    code: plainOtp,
+    hint: `This code expires in ${config.OTP_EXPIRES_MINUTES} minutes.`,
+  });
   await sendTransactionalEmail({ to: user.emailId, subject, text, html });
 };
 
@@ -53,16 +53,15 @@ export const sendSignupOtpEmail = async (user: User, plainOtp: string): Promise<
  * Sends password-reset OTP email.
  */
 export const sendPasswordResetOtpEmail = async (user: User, plainOtp: string): Promise<void> => {
-  const subject = 'Password reset code — EDealer';
-  const text = [
-    `Hello ${user.userName},`,
-    '',
-    `Your password reset code is: ${plainOtp}`,
-    `This code expires in ${config.OTP_EXPIRES_MINUTES} minutes.`,
-    '',
-    'If you did not request a reset, ignore this email.',
-  ].join('\n');
-  const html = `<p>Hello ${user.userName},</p><p>Your password reset code is: <strong>${plainOtp}</strong></p><p>This code expires in ${config.OTP_EXPIRES_MINUTES} minutes.</p>`;
+  const subject = `Password reset code — ${config.APP_NAME}`;
+  const text = `Your password reset code is ${plainOtp}. It expires in ${config.OTP_EXPIRES_MINUTES} minutes.`;
+  const html = renderEmailHtml({
+    preheader: 'Use this code to reset your password.',
+    title: 'Reset your password',
+    message: 'Enter this code to choose a new password.',
+    code: plainOtp,
+    hint: `This code expires in ${config.OTP_EXPIRES_MINUTES} minutes.`,
+  });
   await sendTransactionalEmail({ to: user.emailId, subject, text, html });
 };
 

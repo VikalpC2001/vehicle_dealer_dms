@@ -65,6 +65,44 @@ export const listAssignmentsQuerySchema = z.object({
 });
 
 /**
+ * GET /process-assignments/by-agent/:agentId
+ * Dealer-scoped, paginated list of the work the caller's dealer has assigned to one agent.
+ * `search` matches the vehicle registration number / make / model and the service name;
+ * `agentStatusId` narrows to one of the agent's kanban statuses, or `none` for no status yet.
+ */
+export const dealerAgentAssignmentsSchema = z.object({
+  params: z.object({
+    agentId: z.string().uuid('Invalid agent ID'),
+  }),
+  query: z.object({
+    // Whole numbers only (a fraction or an out-of-range page would otherwise reach Prisma).
+    // `limit` above 100 is accepted and capped by `parsePagination`.
+    page: z.coerce.number().int().positive().max(1_000_000).optional(),
+    limit: z.coerce.number().int().positive().optional(),
+    search: z
+      .string()
+      .trim()
+      .max(100, 'Search is too long')
+      // Postgres text cannot hold a NUL byte.
+      .refine((value) => !value.includes('\u0000'), 'Invalid search')
+      .optional(),
+    agentStatusId: z
+      .union([z.string().uuid('Invalid agent status ID'), z.literal('none')])
+      .optional(),
+  }),
+});
+
+/**
+ * GET /process-assignments/by-agent/:agentId/summary
+ * Dealer-scoped totals for the work the caller's dealer has assigned to one agent.
+ */
+export const dealerAgentAssignmentSummarySchema = z.object({
+  params: z.object({
+    agentId: z.string().uuid('Invalid agent ID'),
+  }),
+});
+
+/**
  * DELETE /process-assignments/:id  ·  GET /process-assignments/:id/details
  * Identifies a single assignment by its UUID path param.
  */
@@ -105,3 +143,5 @@ export type AssignmentIdParams = z.infer<typeof assignmentIdParamsSchema>['param
 export type AgentAssignmentsQuery = z.infer<typeof agentAssignmentsQuerySchema>['query'];
 export type UpdateAgentStatusParams = z.infer<typeof updateAgentStatusSchema>['params'];
 export type UpdateAgentStatusBody = z.infer<typeof updateAgentStatusSchema>['body'];
+export type DealerAgentAssignmentsParams = z.infer<typeof dealerAgentAssignmentsSchema>['params'];
+export type DealerAgentAssignmentsQuery = z.infer<typeof dealerAgentAssignmentsSchema>['query'];

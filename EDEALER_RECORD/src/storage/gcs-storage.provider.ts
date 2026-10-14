@@ -34,4 +34,28 @@ export class GcsStorageProvider implements StorageProvider {
   fileExists(_fileKey: string): Promise<boolean> {
     return Promise.reject(new Error('GcsStorageProvider is not implemented'));
   }
+
+  /** @inheritdoc */
+  readFile(_key: string): Promise<Buffer> {
+    // Real impl: const [buf] = await bucket.file(_key).download(); return buf;
+    return Promise.reject(new Error('GcsStorageProvider is not implemented'));
+  }
+
+  /** @inheritdoc */
+  deleteFile(_key: string): Promise<void> {
+    return Promise.reject(new Error('GcsStorageProvider is not implemented'));
+  }
+
+  /** @inheritdoc */
+  deleteFolder(_prefix: string): Promise<void> {
+    // Real impl: await bucket.deleteFiles({ prefix: `${_prefix}/`, force: true });
+    return Promise.reject(new Error('GcsStorageProvider is not implemented'));
+  }
+
+  /** @inheritdoc */
+  listRootFiles(): Promise<Array<{ key: string; lastModified: Date }>> {
+    // Real impl: const [files] = await bucket.getFiles({ delimiter: '/' }); return the non-prefixed
+    // top-level files → { key: f.name, lastModified: new Date(f.metadata.updated) }.
+    return Promise.reject(new Error('GcsStorageProvider is not implemented'));
+  }
 }

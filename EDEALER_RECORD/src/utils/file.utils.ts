@@ -117,6 +117,18 @@ const FILE_KEY_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.(png|jpg|webp|pdf)$/i;
 
 /**
+ * Reports whether `key` has the exact shape of a server-generated flat upload key
+ * (`{uuidv4}.{png|jpg|webp|pdf}`), i.e. matches {@link FILE_KEY_PATTERN}. The orphan-root-upload
+ * sweep uses this as a hard gate so it only ever deletes files this server itself created via
+ * {@link generateFileName}, never any other file that happens to sit in the uploads root.
+ *
+ * @param key - A bare object key (no folder segment).
+ */
+export const isGeneratedFileKey = (key: string): boolean => {
+  return FILE_KEY_PATTERN.test(key);
+};
+
+/**
  * Sanitizes a vehicle registration number into a filesystem-safe folder segment (uppercased,
  * alphanumeric only). Falls back to `VEHICLE` when nothing usable remains.
  *
@@ -149,6 +161,22 @@ export const buildProcessScopedKey = (
   const folder = `${sanitizeRegistrationForPath(registrationNumber)}_${processId}`;
   const base = fileKey.split('/').pop() ?? fileKey;
   return `${folder}/${base}`;
+};
+
+/**
+ * Builds the per-process storage folder prefix `"{registration}_{processId}"` (NO trailing slash) —
+ * the folder every document/photo of a process lives under. Reuses {@link sanitizeRegistrationForPath}
+ * so it exactly matches the folder component of {@link buildProcessScopedKey}. Used to recursively
+ * delete a process's whole upload folder on permanent delete / purge.
+ *
+ * @param registrationNumber - The process's vehicle registration number.
+ * @param processId - The vehicle process UUID.
+ */
+export const buildProcessFolderPrefix = (
+  registrationNumber: string | null | undefined,
+  processId: string,
+): string => {
+  return `${sanitizeRegistrationForPath(registrationNumber)}_${processId}`;
 };
 
 /**

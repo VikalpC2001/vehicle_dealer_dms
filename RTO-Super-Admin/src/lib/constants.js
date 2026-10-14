@@ -5,6 +5,8 @@ export const OTP_PURPOSE = {
 }
 export const TOKEN_KEY = import.meta.env.VITE_TOKEN_KEY || 'rto_admin_token'
 export const REFRESH_TOKEN_KEY = import.meta.env.VITE_REFRESH_TOKEN_KEY || 'rto_admin_refresh_token'
+// The signed-in user's profile. Always in localStorage (the tokens follow "remember me").
+export const USER_KEY = 'rto_admin_user'
 
 export const USER_ROLES = {
   SUPER_ADMIN: 'super_admin',
@@ -23,6 +25,18 @@ export function homeForRole(role) {
   if (role === 'dealer') return '/dealer/dashboard'
   if (role === 'super_admin') return '/dashboard'
   return '/no-access'
+}
+
+/**
+ * Where the header's account menu (Profile / Settings) sends each role. Dealers and agents have no
+ * standalone profile page — their profile is a tab of their own Settings page (`?tab=profile`).
+ * Returns null for a user with no workspace.
+ */
+export function accountRoutesForRole(role) {
+  if (role === 'agent') return { profile: '/agent/settings?tab=profile', settings: '/agent/settings' }
+  if (role === 'dealer') return { profile: '/dealer/settings?tab=profile', settings: '/dealer/settings' }
+  if (role === 'super_admin') return { profile: '/profile', settings: '/settings' }
+  return null
 }
 
 export const USER_STATUS = {
@@ -61,7 +75,6 @@ export const NAV_ITEMS = [
   { label: 'Document Categories', path: '/document-categories', icon: 'FileStack' },
   { label: 'State & City', path: '/state-city', icon: 'MapPin' },
   { label: 'Users', path: '/users', icon: 'Users' },
-  { label: 'Requests', path: '/requests', icon: 'FileText' },
   { label: 'Subscriptions', path: '/subscriptions', icon: 'CreditCard' },
   { label: 'Notifications', path: '/notifications', icon: 'Bell' },
   { label: 'Activity Logs', path: '/activity', icon: 'Activity' },
@@ -71,11 +84,16 @@ export const NAV_ITEMS = [
 export const NAV_ITEMS_DEALER = [
   { label: 'Dashboard', path: '/dealer/dashboard', icon: 'LayoutDashboard' },
   { label: 'Vehicle Processes', path: '/dealer/processes', icon: 'Car' },
-  { label: 'Task Board', path: '/dealer/board', icon: 'LayoutGrid' },
-  { label: 'Task History', path: '/dealer/tasks/history', icon: 'CheckCheck' },
-  { label: 'Vehicle History', path: '/dealer/vehicle-history', icon: 'History' },
+  // Task History has no sidebar item of its own: it is opened from a button on the Task Board, so
+  // the board's item also shows as the current one while that page is open (`alsoActiveOn`).
+  { label: 'Task Board', path: '/dealer/board', icon: 'LayoutGrid', alsoActiveOn: ['/dealer/tasks/history'] },
   { label: 'Agents', path: '/dealer/agents', icon: 'UserCog', capability: 'agents.manage' },
   { label: 'Ledger', path: '/dealer/ledger', icon: 'BookOpen', capability: 'ledger.view' },
+  { label: 'Export', path: '/dealer/export', icon: 'FileDown' },
+  { label: 'Vehicle History', path: '/dealer/vehicle-history', icon: 'History' },
+  // Mirrors the "Vehicle Processes" item (no `capability`) so the Bin shows for exactly the same
+  // dealer users who see the processes list — keeping the capability-gated Sidebar consistent.
+  { label: 'Bin', path: '/dealer/bin', icon: 'Trash2' },
   { label: 'Roles & Permissions', path: '/dealer/roles', icon: 'ShieldCheck', capability: 'roles.manage' },
   { label: 'Settings', path: '/dealer/settings', icon: 'Settings' },
 ]
@@ -85,6 +103,7 @@ export const NAV_ITEMS_AGENT = [
   { label: 'Task Board', path: '/agent/board', icon: 'LayoutGrid' },
   { label: 'Assignments', path: '/agent/assignments', icon: 'ClipboardList' },
   { label: 'Dealers', path: '/agent/dealers', icon: 'Store' },
+  { label: 'Bin', path: '/agent/bin', icon: 'Trash2' },
   { label: 'Ledger', path: '/agent/ledger', icon: 'BookOpen' },
   { label: 'Settings', path: '/agent/settings', icon: 'Settings' },
 ]

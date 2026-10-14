@@ -17,6 +17,22 @@ export const PAGE_SIZE = {
  * @returns {{ items: unknown[], page: number, limit: number, total: number, totalPages: number }}
  */
 export function normalizePaginatedResponse(data, listKey = 'items', defaultLimit = 10) {
+  // The backend's `sendPaginated` envelope: `{ data: { data: [...rows], meta } }`. Read `meta`
+  // before the array short-circuit below, which would otherwise report a single page.
+  const envelope = data?.data
+  if (envelope && !Array.isArray(envelope) && Array.isArray(envelope.data) && envelope.meta) {
+    const { meta } = envelope
+    const limit = meta.limit ?? defaultLimit
+    const total = meta.total ?? envelope.data.length
+    return {
+      items: envelope.data,
+      page: meta.page ?? 1,
+      limit,
+      total,
+      totalPages: Math.max(1, meta.totalPages ?? Math.ceil(total / limit)),
+    }
+  }
+
   const payload = data?.data?.data ?? data?.data ?? data
 
   if (Array.isArray(payload)) {

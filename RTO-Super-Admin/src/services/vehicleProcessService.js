@@ -87,14 +87,48 @@ export const vehicleProcessService = {
    * Optional `search` filters server-side by vehicle registration number and any person's name.
    * Optional `tagId` filters server-side to processes carrying that tag (keeps pagination correct).
    */
-  async getAll({ page = 1, limit = 10, dealerId, search, tagId, status } = {}) {
+  async getAll({ page = 1, limit = 10, dealerId, search, tagId, status, dateFrom, dateTo } = {}) {
     const params = { page, limit }
     if (dealerId) params.dealerId = dealerId
     if (search) params.search = search
     if (tagId) params.tagId = tagId
     if (status) params.status = status
+    if (dateFrom) params.dateFrom = dateFrom
+    if (dateTo) params.dateTo = dateTo
     const { data } = await api.get('/vehicle-processes', { params })
     return normalizeListResponse(data)
+  },
+
+  /**
+   * GET /vehicle-processes/export — download an Excel/PDF export of the dealer's processes over a
+   * `processDate` range (the current month when no range is given), including only the selected
+   * sections. Returns the file as a Blob plus the server-suggested filename and the `X-Export-*`
+   * counters. `sections` is an array of keys (vehicle|persons|deal|amount|documents|vehicleImages);
+   * dealers omit `dealerId` (scoped to their token dealer).
+   */
+  async exportProcesses({ format, dateFrom, dateTo, dateField, statuses, sections, dealerId } = {}) {
+    const params = { format }
+    if (dateFrom) params.dateFrom = dateFrom
+    if (dateTo) params.dateTo = dateTo
+    if (dateField === 'soldDate') params.dateField = 'soldDate'
+    // Send only a strict subset (0 or all 4 = every status, which the backend treats as no filter).
+    if (statuses?.length && statuses.length < 4) params.statuses = statuses.join(',')
+    if (sections?.length) params.sections = sections.join(',')
+    if (dealerId) params.dealerId = dealerId
+    const response = await api.get('/vehicle-processes/export', {
+      params,
+      responseType: 'blob',
+      timeout: 180000, // image-embedding exports can take a while; generous headroom over the 15s default
+    })
+    const disposition = response.headers['content-disposition'] || ''
+    const match = /filename="?([^"]+)"?/.exec(disposition)
+    const ext = format === 'excel' ? 'xlsx' : 'pdf'
+    return {
+      blob: response.data,
+      filename: match?.[1] || `vehicle-processes.${ext}`,
+      count: Number(response.headers['x-export-count'] ?? 0),
+      truncated: response.headers['x-export-truncated'] === 'true',
+    }
   },
 
   /** GET /vehicle-processes/:id — single process with persons[]. */
@@ -170,6 +204,13 @@ export const vehicleProcessService = {
     return unwrap(data)
   },
 
+  /** PATCH /vehicle-processes/:id/sold-date — edit the recorded sold date (ISO string) of a sold process. */
+  async updateSoldDate(id, soldDate, dealerId) {
+    const body = dealerId ? { soldDate, dealerId } : { soldDate }
+    const { data } = await api.patch(`/vehicle-processes/${id}/sold-date`, body, dealerId ? { params: { dealerId } } : undefined)
+    return unwrap(data)
+  },
+
   /** GET /vehicle-processes/:id/details — vehicle, owner, buyer, references, photos with URLs. */
   async getDetails(id) {
     const { data } = await api.get(`/vehicle-processes/${id}/details`)
@@ -192,9 +233,73 @@ export const vehicleProcessService = {
     return unwrap(data)
   },
 
-  /** DELETE /vehicle-processes/:id — cascades persons, tasks, photos, references. */
+  /**
+   * DELETE /vehicle-processes/:id — SOFT delete: moves the process to the recycle bin (sets
+   * `deletedAt`). It disappears from every active read but its children stay intact and it can be
+   * restored for 7 days (then it is auto-purged). Restore via `restore()`, hard-delete via
+   * `permanentDelete()`, and list the bin via `getBin()` / `getAgentBin()`.
+   */
   async remove(id) {
     const { data } = await api.delete(`/vehicle-processes/${id}`)
+    return unwrap(data)
+  },
+
+  /**
+   * GET /vehicle-processes/bin — the recycle bin (soft-deleted processes) for the caller's scope,
+   * paginated, newest deletion first. A dealer sees their own bin (token-scoped); an agent/super-admin
+   * passes `dealerId` for a dealer they manage. Each item is
+   * `{ processId, registrationNumber, ownerName, deletedAt, purgeAt, daysLeft }`.
+   */
+  async getBin({ page = 1, limit = 10, dealerId } = {}) {
+    const params = { page, limit }
+    if (dealerId) params.dealerId = dealerId
+    const { data } = await api.get('/vehicle-processes/bin', { params })
+    return normalizeListResponse(data)
+  },
+
+  /**
+   * GET /vehicle-processes/agent-bin — the caller agent's own recycle bin across all placeholder
+   * dealers they own, paginated, newest deletion first. Non-agent callers get an empty list. Same item
+   * shape as `getBin()`.
+   */
+  async getAgentBin({ page = 1, limit = 10 } = {}) {
+    const { data } = await api.get('/vehicle-processes/agent-bin', { params: { page, limit } })
+    return normalizeListResponse(data)
+  },
+
+  /**
+   * POST /vehicle-processes/:id/restore — restore a soft-deleted process from the bin (clears
+   * `deletedAt`); its children reappear intact. Scoped by the process itself, so no dealerId needed.
+   */
+  async restore(id) {
+    const { data } = await api.post(`/vehicle-processes/${id}/restore`)
+    return unwrap(data)
+  },
+
+  /**
+   * DELETE /vehicle-processes/:id/permanent — permanently hard-delete a process and cascade all its
+   * children immediately (whether active or already binned). Irreversible. Scoped by the process.
+   */
+  async permanentDelete(id) {
+    const { data } = await api.delete(`/vehicle-processes/${id}/permanent`)
+    return unwrap(data)
+  },
+
+  /**
+   * POST /vehicle-processes/bin/restore — bulk-restore soft-deleted processes from the bin. Body
+   * `{ processIds }`; returns `{ count }` (number restored). The many-row analog of `restore()`.
+   */
+  async bulkRestore(processIds) {
+    const { data } = await api.post('/vehicle-processes/bin/restore', { processIds })
+    return unwrap(data)
+  },
+
+  /**
+   * POST /vehicle-processes/bin/permanent-delete — bulk hard-delete processes (and cascade their
+   * children) from the bin. Irreversible. Body `{ processIds }`; returns `{ count }` (number deleted).
+   */
+  async bulkPermanentDelete(processIds) {
+    const { data } = await api.post('/vehicle-processes/bin/permanent-delete', { processIds })
     return unwrap(data)
   },
 

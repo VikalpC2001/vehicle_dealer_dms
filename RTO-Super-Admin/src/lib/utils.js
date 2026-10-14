@@ -23,6 +23,22 @@ export function formatDateTime(date) {
   }).format(new Date(date))
 }
 
+export const MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+]
+
+/** Month number (1-12) → full month name, or '' when out of range/empty. */
+export function monthName(month) {
+  const n = Number(month)
+  return Number.isInteger(n) && n >= 1 && n <= 12 ? MONTH_NAMES[n - 1] : ''
+}
+
+/** Human "manufacture" label from a 1-12 month + year, e.g. "June 2019" / "2019" / "June" / ''. */
+export function formatManufacture(month, year) {
+  return [monthName(month), year || ''].filter(Boolean).join(' ')
+}
+
 export function formatCurrency(amount) {
   return new Intl.NumberFormat('en-IN', {
     style: 'currency',
@@ -58,13 +74,21 @@ export function downloadCSV(data, filename) {
   URL.revokeObjectURL(url)
 }
 
+// One entry per strength level: its name, the bar fill and the matching text colour.
+const PASSWORD_STRENGTH_LEVELS = [
+  { label: 'Weak', color: 'bg-destructive', textColor: 'text-destructive' },
+  { label: 'Fair', color: 'bg-warning', textColor: 'text-warning' },
+  { label: 'Good', color: 'bg-accent', textColor: 'text-accent' },
+  { label: 'Strong', color: 'bg-success', textColor: 'text-success' },
+]
+
 export function getPasswordStrength(password) {
   let score = 0
   if (password.length >= 8) score++
   if (/[A-Z]/.test(password)) score++
   if (/[0-9]/.test(password)) score++
   if (/[^A-Za-z0-9]/.test(password)) score++
-  const labels = ['Weak', 'Fair', 'Good', 'Strong']
-  const colors = ['bg-destructive', 'bg-warning', 'bg-accent', 'bg-success']
-  return { score, label: labels[Math.max(0, score - 1)] || 'Weak', color: colors[Math.max(0, score - 1)] || 'bg-destructive' }
+  // A typed password is never below the first level, so the bar always shows that level's colour.
+  const level = Math.max(1, score)
+  return { score, percent: level * 25, ...PASSWORD_STRENGTH_LEVELS[level - 1] }
 }

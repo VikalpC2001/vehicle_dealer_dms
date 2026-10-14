@@ -1,11 +1,11 @@
 import { prisma } from '../config/prisma';
+import { Prisma } from '@prisma/client';
 import type {
   Dealer,
   DealerAgent,
   KhataAccount,
   LedgerEntry,
   LedgerDirection,
-  Prisma,
   RoleType,
 } from '@prisma/client';
 
@@ -273,18 +273,33 @@ export async function reverseEntry(
   return prisma.$transaction((tx) => reverseEntryOnTx(tx, originalId, postedByUserId, postedByRole));
 }
 
+/** The dealer-agent book an assignment's cost lives in: the assignment's own dealer and agent. */
+export interface AssignmentCostBook {
+  dealerId: string;
+  agentId: string;
+}
+
 /**
  * Finds the single live "agent cost" entry a dealer posted for an assignment: a `CREDIT` linked to
  * the assignment that is neither reversed nor itself a reversal. Returns null when there is none.
  * The `OnTx` variant composes into a larger transaction (assignment create / cost edit).
+ *
+ * The lookup is limited to the assignment's own `book`: an entry in any OTHER dealer-agent book
+ * that merely points at this assignment is not its cost, and must never be edited or reversed here.
+ * It is also limited to entries posted from the DEALER side: the cost is what the dealer recorded,
+ * so a credit the agent posts against the job stays an ordinary ledger entry and cannot replace it.
  */
 export async function findActiveAssignmentCostEntryOnTx(
   tx: Prisma.TransactionClient,
   assignmentId: string,
+  book: AssignmentCostBook,
 ): Promise<LedgerEntry | null> {
   return tx.ledgerEntry.findFirst({
     where: {
       assignmentId,
+      dealerId: book.dealerId,
+      agentId: book.agentId,
+      postedByRole: 'DEALER',
       direction: 'CREDIT',
       isReversed: false,
       reversesEntryId: null,
@@ -293,15 +308,21 @@ export async function findActiveAssignmentCostEntryOnTx(
   });
 }
 
+/** Non-transactional variant of {@link findActiveAssignmentCostEntryOnTx}. */
 export async function findActiveAssignmentCostEntry(
   assignmentId: string,
+  book: AssignmentCostBook,
 ): Promise<LedgerEntry | null> {
-  return findActiveAssignmentCostEntryOnTx(prisma, assignmentId);
+  return findActiveAssignmentCostEntryOnTx(prisma, assignmentId, book);
 }
 
 /**
  * Batch variant of {@link findActiveAssignmentCostEntry} for list enrichment: the live cost entry
  * per assignment id. Returns a map keyed by `assignmentId`.
+ *
+ * Only a DEALER-posted entry in the assignment's OWN dealer-agent book counts (its `dealerId` and
+ * `agentId` equal the assignment's), so neither an entry posted in another book against this
+ * assignment id nor a credit posted by the agent can be shown as its cost or added to a total.
  */
 export async function listActiveCostEntriesForAssignments(
   assignmentIds: string[],
@@ -310,17 +331,37 @@ export async function listActiveCostEntriesForAssignments(
   const rows = await prisma.ledgerEntry.findMany({
     where: {
       assignmentId: { in: assignmentIds },
+      postedByRole: 'DEALER',
       direction: 'CREDIT',
       isReversed: false,
       reversesEntryId: null,
     },
     orderBy: { seq: 'desc' },
+    include: { assignment: { select: { dealerId: true, agentId: true } } },
   });
   const map = new Map<string, LedgerEntry>();
-  for (const row of rows) {
-    if (row.assignmentId && !map.has(row.assignmentId)) map.set(row.assignmentId, row);
+  for (const { assignment, ...entry } of rows) {
+    if (!entry.assignmentId || !assignment) continue;
+    if (entry.dealerId !== assignment.dealerId || entry.agentId !== assignment.agentId) continue;
+    if (!map.has(entry.assignmentId)) map.set(entry.assignmentId, entry);
   }
   return map;
+}
+
+/**
+ * Totals the live agent costs of the given assignments, using the SAME definition as
+ * {@link listActiveCostEntriesForAssignments} (the latest live `CREDIT` per assignment), so a total
+ * always equals the sum of the per-row costs. Amounts are added as `Decimal`s.
+ *
+ * @returns `total` (sum of the live costs) and `count` (how many assignments carry a cost).
+ */
+export async function sumActiveCostsForAssignments(
+  assignmentIds: string[],
+): Promise<{ total: number; count: number }> {
+  const costs = await listActiveCostEntriesForAssignments(assignmentIds);
+  let total = new Prisma.Decimal(0);
+  for (const entry of costs.values()) total = total.add(entry.amount);
+  return { total: total.toNumber(), count: costs.size };
 }
 
 /**

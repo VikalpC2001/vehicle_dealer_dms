@@ -1,7 +1,7 @@
-import { NavLink, useNavigate } from 'react-router-dom'
+import { NavLink, useNavigate, useLocation } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import {
-  LayoutDashboard, Users, FileText, CreditCard, Bell, Activity, Settings, LogOut, Shield, ShieldCheck, Store, MapPin, Car, UserCog, BookOpen, LayoutGrid, ClipboardList, History, Inbox, FileStack, CheckCheck,
+  LayoutDashboard, Users, FileText, CreditCard, Bell, Activity, Settings, LogOut, Shield, ShieldCheck, Store, MapPin, Car, UserCog, BookOpen, LayoutGrid, ClipboardList, History, Inbox, FileStack, CheckCheck, Trash2, FileDown,
 } from 'lucide-react'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
@@ -13,13 +13,14 @@ import { getInitials } from '@/lib/utils'
 import { cn } from '@/lib/utils'
 
 const iconMap = {
-  LayoutDashboard, Store, MapPin, Users, FileText, CreditCard, Bell, Activity, Settings, Car, UserCog, BookOpen, LayoutGrid, ClipboardList, History, Inbox, FileStack, ShieldCheck, CheckCheck,
+  LayoutDashboard, Store, MapPin, Users, FileText, CreditCard, Bell, Activity, Settings, Car, UserCog, BookOpen, LayoutGrid, ClipboardList, History, Inbox, FileStack, ShieldCheck, CheckCheck, Trash2, FileDown,
 }
 
 export function Sidebar({ collapsed, onClose }) {
   const { user, logout } = useAuth()
   const { can } = useCapabilities()
   const navigate = useNavigate()
+  const { pathname } = useLocation()
 
   const role = user?.role
   const baseNavItems = role === 'agent' ? NAV_ITEMS_AGENT : role === 'dealer' ? NAV_ITEMS_DEALER : NAV_ITEMS
@@ -62,11 +63,16 @@ export function Sidebar({ collapsed, onClose }) {
             <NavLink
               key={item.path}
               to={item.path}
-              onClick={onClose}
+              onClick={(event) => {
+                // Already on this page: do nothing (a navigation would drop its query string, e.g.
+                // the open Settings tab, and with it any unsaved input there).
+                if (pathname === item.path) event.preventDefault()
+                onClose?.()
+              }}
               className={({ isActive }) =>
                 cn(
                   'flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-200',
-                  isActive
+                  isActive || item.alsoActiveOn?.includes(pathname)
                     ? 'gradient-bg text-white shadow-sm'
                     : 'text-muted-foreground hover:bg-muted hover:text-foreground'
                 )

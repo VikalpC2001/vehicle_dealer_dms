@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
 import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog'
@@ -44,6 +45,7 @@ export default function Agents() {
   const [formOpen, setFormOpen] = useState(false)
   const [editAgent, setEditAgent] = useState(null)
   const [deleteTarget, setDeleteTarget] = useState(null)
+  const [pauseTarget, setPauseTarget] = useState(null) // agent awaiting the "pause access" confirmation
   const [userTarget, setUserTarget] = useState(null)
   const [userForm, setUserForm] = useState(EMPTY_USER)
   const queryClient = useQueryClient()
@@ -91,6 +93,27 @@ export default function Agents() {
     },
     onError: (err) => {
       toast({ title: 'Failed to delete agent', description: getErrorMessage(err), variant: 'destructive' })
+    },
+  })
+
+  // Pause / resume the agent firm's access (PATCH /agents/:id/access). Pausing signs every user
+  // of the firm out, so it goes through a confirmation; resuming applies straight away.
+  const { mutate: setAccess, isPending: accessPending } = useMutation({
+    mutationFn: ({ id, isActive }) => agentService.setAccess(id, isActive),
+    onSuccess: (_res, vars) => {
+      toast({
+        title: vars.isActive ? 'Access resumed' : 'Access paused',
+        description: vars.isActive
+          ? 'The agent and its users can sign in again.'
+          : 'The agent and its users are signed out until access is resumed.',
+        variant: 'success',
+      })
+      setPauseTarget(null)
+      // Returned so the mutation stays pending (switches disabled) until the refreshed rows are in.
+      return queryClient.invalidateQueries({ queryKey: ['agents'] })
+    },
+    onError: (err) => {
+      toast({ title: 'Failed to update access', description: getErrorMessage(err), variant: 'destructive' })
     },
   })
 
@@ -154,6 +177,26 @@ export default function Agents() {
         ),
       },
       {
+        key: 'isActive',
+        label: 'Access',
+        render: (row) => {
+          const active = row.isActive !== false
+          return (
+            <div className="flex items-center gap-2">
+              <Switch
+                checked={active}
+                disabled={accessPending}
+                onCheckedChange={(checked) =>
+                  checked ? setAccess({ id: getAgentId(row), isActive: true }) : setPauseTarget(row)
+                }
+                aria-label={`Access for ${row.firmName ?? 'agent'}`}
+              />
+              <Badge variant={active ? 'success' : 'warning'}>{active ? 'Active' : 'Paused'}</Badge>
+            </div>
+          )
+        },
+      },
+      {
         label: 'Actions',
         render: (row) => (
           <div className="flex items-center gap-1">
@@ -175,7 +218,8 @@ export default function Agents() {
         ),
       },
     ],
-    []
+    // The Access switch reads the mutation's pending flag, so the columns must follow it.
+    [accessPending, setAccess]
   )
 
   return (
@@ -324,6 +368,17 @@ export default function Agents() {
         variant="destructive"
         onConfirm={() => deleteMutation.mutate(getAgentId(deleteTarget))}
         loading={deleteMutation.isPending}
+      />
+
+      <ConfirmModal
+        open={!!pauseTarget}
+        onOpenChange={() => setPauseTarget(null)}
+        title="Pause Agent Access"
+        description={`Pause access for ${pauseTarget?.firmName ?? 'this agent'}? All users of this firm will be signed out immediately and cannot sign in until access is resumed.`}
+        confirmLabel="Pause Access"
+        variant="destructive"
+        onConfirm={() => setAccess({ id: getAgentId(pauseTarget), isActive: false })}
+        loading={accessPending}
       />
     </div>
   )

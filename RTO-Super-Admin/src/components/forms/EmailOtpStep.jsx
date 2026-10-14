@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import { Loader2, MailCheck } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
+import { OtpInput } from '@/components/ui/otp-input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { registrationService } from '@/services/registrationService'
-import { getErrorMessage } from '@/lib/authErrors'
+import { getErrorCode, getErrorMessage } from '@/lib/authErrors'
 import { toast } from '@/hooks/use-toast'
+
+const OTP_LENGTH = 6
 
 /**
  * Reusable "verify your email" step: a 6-digit code input + resend. On success it calls
@@ -22,8 +24,17 @@ import { toast } from '@/hooks/use-toast'
  */
 export function EmailOtpStep({ email, onVerified, autoResend = false, onBack }) {
   const [otp, setOtp] = useState('')
+  const [wrongCode, setWrongCode] = useState(false) // red boxes after a failed verification, until edited
   const [verifying, setVerifying] = useState(false)
   const sentRef = useRef(false)
+  const inputRef = useRef(null)
+  const otpRef = useRef('') // the code in the boxes right now; `otp` inside verify() is the one that was submitted
+
+  const changeOtp = (value) => {
+    otpRef.current = value
+    setOtp(value)
+    setWrongCode(false)
+  }
 
   useEffect(() => {
     if (autoResend && !sentRef.current) {
@@ -34,12 +45,15 @@ export function EmailOtpStep({ email, onVerified, autoResend = false, onBack }) 
 
   const verify = async (e) => {
     e.preventDefault()
-    if (otp.trim().length < 4) return
+    if (otp.length !== OTP_LENGTH) return
     setVerifying(true)
     try {
-      const raw = await registrationService.verifyOtp(email, otp.trim())
+      const raw = await registrationService.verifyOtp(email, otp)
       onVerified(raw)
     } catch (err) {
+      // 4006 = the server rejected this code. Red only for that (not a network or server error),
+      // and only if that code is still what the boxes hold.
+      if (getErrorCode(err) === 4006 && otpRef.current === otp) setWrongCode(true)
       toast({ title: 'Verification failed', description: getErrorMessage(err), variant: 'destructive' })
     } finally {
       setVerifying(false)
@@ -49,6 +63,9 @@ export function EmailOtpStep({ email, onVerified, autoResend = false, onBack }) 
   const resend = async () => {
     try {
       await registrationService.resendOtp(email)
+      // The previous code no longer works, so start the boxes afresh for the new one.
+      changeOtp('')
+      inputRef.current?.focus()
       toast({ title: 'Code re-sent', description: 'Check your email for a new code.', variant: 'success' })
     } catch (err) {
       toast({ title: 'Could not resend', description: getErrorMessage(err), variant: 'destructive' })
@@ -67,18 +84,18 @@ export function EmailOtpStep({ email, onVerified, autoResend = false, onBack }) 
       <CardContent>
         <form onSubmit={verify} className="space-y-4">
           <div className="space-y-2">
-            <Label>Verification code</Label>
-            <Input
-              inputMode="numeric"
-              autoComplete="one-time-code"
-              maxLength={6}
-              placeholder="123456"
+            <Label htmlFor="email-otp" className="block text-center">Verification code</Label>
+            <OtpInput
+              ref={inputRef}
+              id="email-otp"
+              length={OTP_LENGTH}
               value={otp}
-              onChange={(e) => setOtp(e.target.value.replace(/\D/g, ''))}
-              className="text-center text-lg tracking-[0.5em]"
+              onChange={changeOtp}
+              invalid={wrongCode}
+              autoFocus
             />
           </div>
-          <Button type="submit" className="w-full" size="lg" disabled={verifying || otp.trim().length < 4}>
+          <Button type="submit" className="w-full" size="lg" disabled={verifying || otp.length !== OTP_LENGTH}>
             {verifying ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Verifying…</> : 'Verify & continue'}
           </Button>
           <div className="flex items-center justify-between text-sm">

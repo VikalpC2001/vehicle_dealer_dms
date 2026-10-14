@@ -13,6 +13,7 @@ import { getPrimaryAgentIdForUser } from './agent-wise-user.service';
 import { hashPassword } from './password-auth.service';
 import { issueUserAccessToken } from './access-token.service';
 import { sendTransactionalEmail } from './email.service';
+import { renderEmailHtml } from '../utils/email-template';
 import { signRefreshToken } from '../utils/jwt';
 import { AppError } from '../utils/app-error';
 import type { AcceptInvitationBody } from '../validations/agent-invitation.validation';
@@ -49,17 +50,21 @@ function buildInviteLink(token: string): string {
 /** Sends the onboarding email (logged to stdout in dev when SMTP is unconfigured). */
 async function sendInviteEmail(params: {
   to: string;
-  agentName: string;
   dealerName: string;
   link: string;
 }): Promise<void> {
-  const { to, agentName, dealerName, link } = params;
+  const { to, dealerName, link } = params;
   const subject = `${dealerName} invited you to join as an RTO agent`;
-  const text =
-    `Hi ${agentName},\n\n${dealerName} has invited you to join their RTO platform as an agent.\n\n` +
-    `Complete your onboarding here (link valid ${INVITATION_TTL_DAYS} days):\n${link}\n\n` +
-    `If you weren't expecting this, you can ignore this email.`;
-  await sendTransactionalEmail({ to, subject, text });
+  const text = `${dealerName} invited you to join as an RTO agent. Complete onboarding (valid ${INVITATION_TTL_DAYS} days): ${link}`;
+  const html = renderEmailHtml({
+    preheader: `${dealerName} invited you to join as an RTO agent.`,
+    badge: { label: 'Invitation', tone: 'primary' },
+    title: `${dealerName} invited you`,
+    message: 'Join as an RTO agent to start working with them.',
+    action: { label: 'Complete onboarding', url: link },
+    hint: `This link is valid for ${INVITATION_TTL_DAYS} days.`,
+  });
+  await sendTransactionalEmail({ to, subject, text, html });
 }
 
 /**
@@ -138,7 +143,6 @@ export async function createInvitation(
   const link = buildInviteLink(token);
   await sendInviteEmail({
     to: email,
-    agentName: row.agentName,
     dealerName: dealer.displayName || dealer.firmName,
     link,
   });
@@ -200,7 +204,6 @@ export async function resendInvitation(
   const link = buildInviteLink(token);
   await sendInviteEmail({
     to: updated.emailId,
-    agentName: updated.agentName,
     dealerName: dealer.displayName || dealer.firmName,
     link,
   });

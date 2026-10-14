@@ -305,6 +305,8 @@ export interface VehicleHistoryEvent {
   amount: number | null;
   currency: string;
   processId: string;
+  /** Referrer name for this side of the deal (null = direct, shown as "Self" in the UI). */
+  referenceName: string | null;
 }
 
 /** Per-vehicle history: own events + own summary + an anonymized cross-dealer market signal. */
@@ -362,6 +364,14 @@ export async function getVehicleHistory(
   let marginTotal: Prisma.Decimal | null = null;
   let expenseTotal: Prisma.Decimal | null = null;
 
+  // The referrer for a side of the deal: a BUY (dealer buys from the seller) carries the SELL-side
+  // reference; a SELL (dealer sells to the buyer) carries the BUY-side reference. Null = direct ("Self").
+  const referenceNameFor = (
+    proc: (typeof processes)[number],
+    referenceType: 'SELL' | 'BUY',
+  ): string | null =>
+    proc.processReferences.find((r) => r.referenceType === referenceType)?.reference?.referenceName ?? null;
+
   for (const proc of processes) {
     const seller = proc.persons.find((p) => p.personType === 'SELLER') ?? null;
     const buyer = proc.persons.find((p) => p.personType === 'BUYER') ?? null;
@@ -376,6 +386,7 @@ export async function getVehicleHistory(
         amount: proc.purchasePrice ? proc.purchasePrice.toNumber() : null,
         currency: proc.priceCurrency ?? 'INR',
         processId: proc.processId,
+        referenceName: referenceNameFor(proc, 'SELL'),
       });
     }
     if (buyer) {
@@ -388,6 +399,7 @@ export async function getVehicleHistory(
         amount: proc.salePrice ? proc.salePrice.toNumber() : null,
         currency: proc.priceCurrency ?? 'INR',
         processId: proc.processId,
+        referenceName: referenceNameFor(proc, 'BUY'),
       });
     }
     // Per-process gross margin only when BOTH prices exist; Decimal math before any toNumber.

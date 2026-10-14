@@ -50,6 +50,8 @@ export interface PersonDetailDto {
   mobileNumber: string;
   personType: 'SELLER' | 'BUYER';
   status: 'ACTIVE' | 'CANCELLED';
+  /** When this person row was created — the add/change date shown in the Seller & Buyer tab. */
+  createdAt: Date;
   idPhotos: PersonPhotoDto[];
 }
 
@@ -222,6 +224,7 @@ export async function listPersonsByProcess(
     mobileNumber: p.mobileNumber,
     personType: p.personType,
     status: p.status,
+    createdAt: p.createdAt,
     idPhotos: p.uploadPhotos.map((ph) => ({
       processUploadPhotoId: ph.processUploadPhotoId,
       category: ph.category,

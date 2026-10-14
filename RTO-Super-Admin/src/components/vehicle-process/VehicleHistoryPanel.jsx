@@ -73,6 +73,16 @@ export function VehicleHistoryPanel({ registrationNumber, currentProcessId }) {
       ),
     },
     {
+      key: 'referenceName',
+      label: 'Reference',
+      render: (row) =>
+        row.referenceName ? (
+          <span className="font-medium">{row.referenceName}</span>
+        ) : (
+          <Badge variant="secondary">Self</Badge>
+        ),
+    },
+    {
       key: 'amount',
       label: 'Amount',
       render: (row) =>

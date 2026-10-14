@@ -20,11 +20,11 @@ import { getCroppedFile } from '@/lib/image'
  * @param {object} props
  * @param {boolean} props.open
  * @param {File|null} props.file - The raw selected file to crop.
- * @param {string} [props.fileName] - Output filename (.jpg).
+ * @param {string} [props.fileName] - Output base filename (getCroppedFile emits WebP, .webp).
  * @param {() => void} props.onCancel
  * @param {(croppedFile: File) => void} props.onCropped
  */
-export function ImageCropperDialog({ open, file, fileName = 'image.jpg', onCancel, onCropped }) {
+export function ImageCropperDialog({ open, file, fileName = 'image.webp', onCancel, onCropped }) {
   const src = useMemo(() => (file ? URL.createObjectURL(file) : null), [file])
   const imgRef = useRef(null)
   const [crop, setCrop] = useState()
@@ -48,7 +48,9 @@ export function ImageCropperDialog({ open, file, fileName = 'image.jpg', onCance
     setBusy(true)
     try {
       const cropped = await getCroppedFile(imgRef.current, completed, fileName)
-      onCropped(cropped)
+      // If encoding failed (null — e.g. an unencodable oversized canvas), fall back to the original
+      // selected file so we never hand back nothing/a corrupt file.
+      onCropped(cropped || file)
     } finally {
       setBusy(false)
     }

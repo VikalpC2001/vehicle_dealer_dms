@@ -8,6 +8,7 @@ import {
   listProcessUploadPhotosHandler,
   getProcessUploadPhotoByIdHandler,
   updateProcessUploadPhotoHandler,
+  setStarredVehiclePhotoHandler,
   deleteProcessUploadPhotoHandler,
 } from '../controllers/process-upload-photo.controller';
 import {
@@ -16,6 +17,7 @@ import {
   listProcessUploadPhotosSchema,
   getProcessUploadPhotoByIdSchema,
   updateProcessUploadPhotoSchema,
+  starProcessUploadPhotoSchema,
   deleteProcessUploadPhotoSchema,
 } from '../validations/process-upload-photo.validation';
 
@@ -43,6 +45,12 @@ router.patch(
   '/:id',
   validate(updateProcessUploadPhotoSchema),
   asyncHandler(updateProcessUploadPhotoHandler),
+);
+
+router.patch(
+  '/:id/star',
+  validate(starProcessUploadPhotoSchema),
+  asyncHandler(setStarredVehiclePhotoHandler),
 );
 
 router.delete(

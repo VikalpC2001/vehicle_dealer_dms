@@ -14,6 +14,7 @@ import {
 } from '../utils/file.utils';
 import { AppError } from '../utils/app-error';
 import { StatusCodes } from 'http-status-codes';
+import { logUnknownError } from '../utils/logger';
 
 /**
  * Coordinates presigned-style URL generation and persisting uploaded bytes.
@@ -108,6 +109,55 @@ export class UploadService {
   }
 
   /**
+   * Best-effort delete that never throws — removes the object at `key`. Used after a photo row is
+   * deleted or its image replaced, so orphaned bytes are cleaned up without letting a missing or
+   * undeletable file break the DB operation. Failures (including "not implemented" on GCS) are
+   * logged and swallowed.
+   *
+   * @param key - Object key to remove.
+   */
+  async deleteFile(key: string): Promise<void> {
+    try {
+      await this.storage.deleteFile(key);
+    } catch (err: unknown) {
+      logUnknownError(`[upload] Failed to delete file "${key}"`, err);
+    }
+  }
+
+  /**
+   * Best-effort recursive folder delete that never throws — removes the folder at `prefix` and every
+   * object under it. Used after a process's DB row is permanently deleted / purged to clean up its
+   * per-process upload folder `"{registration}_{processId}/"`, so a missing or undeletable folder
+   * (including "not implemented" on GCS) can't break the delete. Failures are logged and swallowed.
+   *
+   * @param prefix - Folder prefix (no trailing slash), e.g. `"{registration}_{processId}"`.
+   */
+  async deleteFolder(prefix: string): Promise<void> {
+    try {
+      await this.storage.deleteFolder(prefix);
+    } catch (err: unknown) {
+      logUnknownError(`[upload] Failed to delete folder "${prefix}"`, err);
+    }
+  }
+
+  /**
+   * Best-effort listing of the top-level upload files (bare keys, no subfolder) that never throws —
+   * returns `[]` on any failure (including "not implemented" on GCS). Used by the orphan-root-upload
+   * sweep to enumerate flat-uploaded files still sitting in the storage root; a listing failure must
+   * only skip that sweep run, never crash it.
+   *
+   * @returns Top-level files as `{ key, lastModified }`, or `[]` on error.
+   */
+  async listRootFiles(): Promise<Array<{ key: string; lastModified: Date }>> {
+    try {
+      return await this.storage.listRootFiles();
+    } catch (err: unknown) {
+      logUnknownError('[upload] Failed to list root files', err);
+      return [];
+    }
+  }
+
+  /**
    * Moves a flat-uploaded file into its per-process folder `"{registration}_{processId}/"` and
    * returns the new (folder-scoped) key to store on the photo record. Idempotent: a key that already
    * contains a folder is returned unchanged without a move. On any move failure (e.g. the source is
@@ -136,9 +186,24 @@ export class UploadService {
       return destKey;
     }
     // Move failed (commonly: a sibling reference already moved the shared source). If the bytes are
-    // now at the destination, the folder key is authoritative; otherwise keep the original key.
+    // now at the destination, the folder key is authoritative.
     const destHasBytes = await this.storage.fileExists(destKey).catch(() => false);
-    return destHasBytes ? destKey : fileKey;
+    if (destHasBytes) {
+      return destKey;
+    }
+    // Neither destination nor a sibling holds the bytes. Only keep the flat key if its bytes still
+    // exist. If the source is ALSO gone (e.g. the orphan-root-upload sweep unlinked a stale draft in
+    // the tiny window before this attach committed), fail LOUDLY instead of returning a key that points
+    // at a deleted file — otherwise the caller would commit a DB row referencing missing bytes.
+    const sourceHasBytes = await this.storage.fileExists(fileKey).catch(() => false);
+    if (!sourceHasBytes) {
+      throw new AppError(
+        'Uploaded file is no longer available; please re-upload and try again.',
+        StatusCodes.CONFLICT,
+        4131,
+      );
+    }
+    return fileKey;
   }
 }
 

@@ -20,7 +20,11 @@ const envSchema = z.object({
   WEBAUTHN_RP_ID: z.string().min(1).default('localhost'),
   WEBAUTHN_RP_ORIGIN: z.string().url().default('http://localhost:4002'),
   GEMINI_API_KEY: z.string().min(1),
-  GEMINI_MODEL: z.string().min(1).default('gemini-3-flash-preview'),
+  /**
+   * Gemini vision model used to extract RC / ID fields directly from the image. A lite model is cheapest;
+   * a flash model gives more accuracy. Thinking is disabled at call time to keep cost + latency low.
+   */
+  GEMINI_MODEL: z.string().min(1).default('gemini-2.5-flash-lite'),
   /** Base URL of the frontend app (optional deep links / marketing). */
   FRONTEND_URL: z.string().url().default('http://localhost:5173'),
   /** If true, password and passkey login are rejected until `emailVerified` is true. */
@@ -32,6 +36,8 @@ const envSchema = z.object({
   SMTP_USER: z.string().optional().default(''),
   SMTP_PASS: z.string().optional().default(''),
   EMAIL_FROM: z.string().min(1).default('noreply@edealer.local'),
+  /** Product name shown in emails (header, footer, subjects). */
+  APP_NAME: z.string().trim().min(1).default('E-Dealer'),
   /** Public origin for absolute URLs (upload URLs, static file links). No trailing slash. */
   BASE_URL: z.string().url().default('http://localhost:4002'),
   /**
@@ -50,6 +56,12 @@ const envSchema = z.object({
   TRUST_PROXY: z.coerce.boolean().default(false),
   /** Directory under process.cwd() where uploaded files are stored (local storage). */
   UPLOAD_DIR: z.string().min(1).default('uploads'),
+  /**
+   * Retention window (hours) for the orphaned-flat-upload sweep: a bare `{uuid}.{ext}` file sitting in
+   * the uploads root is only deleted once it is this many hours old AND unreferenced by any DB row. Keeps
+   * a fresh two-step upload that is still mid-attach from being swept.
+   */
+  ORPHAN_UPLOAD_RETENTION_HOURS: z.coerce.number().min(1).default(24),
 });
 
 const parsed = envSchema.safeParse(process.env);

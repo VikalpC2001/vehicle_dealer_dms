@@ -14,12 +14,12 @@ import {
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { DataTable } from '@/components/tables/DataTable'
 import { SearchInput } from '@/components/common/SearchInput'
-import { NewTaskButton } from '@/components/vehicle-process/NewTaskButton'
 import { TagChip } from '@/components/vehicle-process/TagChip'
 import { useDebounce } from '@/hooks/useDebounce'
 import { vehicleProcessService, getProcessId } from '@/services/vehicleProcessService'
 import { dealerTagService } from '@/services/dealerTagService'
 import { PROCESS_STATUSES, PROCESS_STATUS_LABEL, PROCESS_STATUS_COLOUR } from '@/lib/processStatus'
+import { VehicleAvatar } from '@/components/vehicle-process/VehicleAvatar'
 import { PAGE_SIZE } from '@/lib/pagination'
 import { formatDate } from '@/lib/utils'
 
@@ -39,11 +39,6 @@ function tagIdOf(t) {
 
 function registrationOf(row) {
   return row?.vehicle?.registrationNumber ?? row?.registrationNumber ?? '—'
-}
-
-function sellerOf(row) {
-  const seller = (row?.persons ?? []).find((p) => p.personType === 'SELLER')
-  return seller?.personName ?? '—'
 }
 
 export default function VehicleProcesses() {
@@ -85,24 +80,22 @@ export default function VehicleProcesses() {
       {
         key: 'registrationNumber',
         label: 'Vehicle Number',
-        render: (row) => <span className="font-semibold">{registrationOf(row)}</span>,
+        render: (row) => (
+          <div className="flex items-center gap-2.5">
+            <VehicleAvatar photoUrl={row.starredPhotoUrl} className="h-12 w-12" />
+            <span className="font-semibold">{registrationOf(row)}</span>
+          </div>
+        ),
       },
-      { label: 'Seller', render: (row) => sellerOf(row) },
       {
-        key: 'status',
-        label: 'Status',
-        render: (row) =>
-          row.status ? (
-            <span className="inline-flex items-center gap-1.5 text-sm">
-              <span
-                className="h-2 w-2 rounded-full"
-                style={{ backgroundColor: PROCESS_STATUS_COLOUR[row.status] }}
-              />
-              {PROCESS_STATUS_LABEL[row.status] ?? row.status}
-            </span>
-          ) : (
-            <span className="text-xs text-muted-foreground">Open</span>
-          ),
+        key: 'model',
+        label: 'Model',
+        render: (row) => row.vehicle?.model || <span className="text-muted-foreground">—</span>,
+      },
+      {
+        key: 'manufactureYear',
+        label: 'Mfg. Year',
+        render: (row) => row.vehicle?.manufactureYear || <span className="text-muted-foreground">—</span>,
       },
       {
         key: 'tags',
@@ -120,12 +113,28 @@ export default function VehicleProcesses() {
         },
       },
       {
+        key: 'status',
+        label: 'Status',
+        render: (row) =>
+          row.status ? (
+            <span className="inline-flex items-center gap-1.5 text-sm">
+              <span
+                className="h-2 w-2 rounded-full"
+                style={{ backgroundColor: PROCESS_STATUS_COLOUR[row.status] }}
+              />
+              {PROCESS_STATUS_LABEL[row.status] ?? row.status}
+            </span>
+          ) : (
+            <span className="text-xs text-muted-foreground">Open</span>
+          ),
+      },
+      {
         key: 'processDate',
         label: 'Process Date',
         render: (row) => (row.processDate ? formatDate(row.processDate) : '—'),
       },
       {
-        label: 'Actions',
+        label: 'Action',
         render: (row) => (
           <Button
             variant="ghost"
@@ -156,33 +165,6 @@ export default function VehicleProcesses() {
           <p className="text-muted-foreground mt-1">Manage your vehicle buy/sell records and RTO processes</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <SearchInput
-            value={searchInput}
-            onChange={(v) => {
-              setSearchInput(v)
-              setPage(1)
-            }}
-            placeholder="Search vehicle no. or name"
-            className="w-full sm:w-64"
-          />
-          <Select
-            value={tagFilter}
-            onValueChange={(v) => {
-              setTagFilter(v)
-              setPage(1)
-            }}
-          >
-            <SelectTrigger className="w-44">
-              <SelectValue placeholder="All tags" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={ALL_TAGS}>All tags</SelectItem>
-              {tags.map((t) => (
-                <SelectItem key={tagIdOf(t)} value={tagIdOf(t)}>{t.tagName}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <NewTaskButton />
           <Button onClick={() => navigate('/dealer/processes/new')}>
             <Plus className="mr-2 h-4 w-4" /> New Process
           </Button>
@@ -204,6 +186,36 @@ export default function VehicleProcesses() {
           ))}
         </TabsList>
       </Tabs>
+
+      {/* Search + filter toolbar, sitting directly above the table. */}
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+        <SearchInput
+          value={searchInput}
+          onChange={(v) => {
+            setSearchInput(v)
+            setPage(1)
+          }}
+          placeholder="Search by vehicle number or name"
+          className="w-full sm:flex-1"
+        />
+        <Select
+          value={tagFilter}
+          onValueChange={(v) => {
+            setTagFilter(v)
+            setPage(1)
+          }}
+        >
+          <SelectTrigger className="w-full sm:w-48">
+            <SelectValue placeholder="All tags" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={ALL_TAGS}>All tags</SelectItem>
+            {tags.map((t) => (
+              <SelectItem key={tagIdOf(t)} value={tagIdOf(t)}>{t.tagName}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
 
       <DataTable
         mode="server"

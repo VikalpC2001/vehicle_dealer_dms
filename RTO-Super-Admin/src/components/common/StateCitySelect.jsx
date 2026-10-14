@@ -61,7 +61,7 @@ export function StateCitySelect({
       <div className="space-y-2">
         <Label htmlFor="state">State{req}</Label>
         <Select
-          value={stateValue || undefined}
+          value={stateValue ?? ''}
           onValueChange={(v) => {
             onStateChange(v)
             // Changing state invalidates the previously chosen city.
@@ -94,7 +94,7 @@ export function StateCitySelect({
       <div className="space-y-2">
         <Label htmlFor="city">City{req}</Label>
         <Select
-          value={cityValue || undefined}
+          value={cityValue ?? ''}
           onValueChange={(v) => onCityChange(v)}
           disabled={disabled || !stateValue}
         >

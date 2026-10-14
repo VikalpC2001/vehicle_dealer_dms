@@ -1,7 +1,8 @@
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
-import { Plus, Trash2, Mail, Phone, Users, Clock, Send, X, ArrowRightLeft } from 'lucide-react'
+import { Plus, Trash2, Mail, Phone, Users, Clock, Send, X, ArrowRightLeft, ChevronRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -108,25 +109,36 @@ export default function DealerAgents() {
           ) : (
             <div className="divide-y divide-border">
               {items.map((item) => (
-                <div key={item.dealerAgentId} className="flex items-center justify-between gap-4 py-3">
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <p className="font-medium">{item.agent?.displayName || item.agent?.firmName}</p>
-                      {item.agent?.agentName && (
-                        <span className="text-sm text-muted-foreground">{item.agent.agentName}</span>
-                      )}
-                      {item.status && <Badge variant="success">{item.status}</Badge>}
-                      {item.source && <Badge variant="outline">{item.source}</Badge>}
+                <div key={item.dealerAgentId} className="flex items-center justify-between gap-2 py-1">
+                  {/* The row (everything but the two buttons) opens the work assigned to this agent. */}
+                  <Link
+                    to={`/dealer/agents/${item.agentId ?? item.agent?.agentId}`}
+                    title="View assigned work"
+                    className="group -mx-2 flex min-w-0 flex-1 items-center justify-between gap-3 rounded-lg px-2 py-2 transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="font-medium">{item.agent?.displayName || item.agent?.firmName}</p>
+                        {item.agent?.agentName && (
+                          <span className="text-sm text-muted-foreground">{item.agent.agentName}</span>
+                        )}
+                        {item.status && <Badge variant="success">{item.status}</Badge>}
+                        {item.source && <Badge variant="outline">{item.source}</Badge>}
+                      </div>
+                      <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                        {item.agent?.emailId && (
+                          <span className="flex items-center gap-1"><Mail className="h-3.5 w-3.5" /> {item.agent.emailId}</span>
+                        )}
+                        {item.agent?.mobileNo && (
+                          <span className="flex items-center gap-1"><Phone className="h-3.5 w-3.5" /> {item.agent.mobileNo}</span>
+                        )}
+                      </div>
                     </div>
-                    <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                      {item.agent?.emailId && (
-                        <span className="flex items-center gap-1"><Mail className="h-3.5 w-3.5" /> {item.agent.emailId}</span>
-                      )}
-                      {item.agent?.mobileNo && (
-                        <span className="flex items-center gap-1"><Phone className="h-3.5 w-3.5" /> {item.agent.mobileNo}</span>
-                      )}
-                    </div>
-                  </div>
+                    <span className="flex shrink-0 items-center gap-1 text-xs font-medium text-muted-foreground group-hover:text-foreground">
+                      <span className="hidden sm:inline">View work</span>
+                      <ChevronRight className="h-4 w-4" />
+                    </span>
+                  </Link>
                   <div className="flex items-center gap-1">
                     <Button
                       variant="ghost"

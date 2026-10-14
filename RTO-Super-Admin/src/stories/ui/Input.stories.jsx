@@ -8,7 +8,7 @@ const meta = {
   tags: ['autodocs'],
   parameters: componentDocs({
     description: 'Text input — h-10, rounded-lg, border-border, focus ring-2.',
-    usage: 'Pair with Label in space-y-2 wrapper. Show errors as text-sm text-destructive below.',
+    usage: 'Pair with Label in space-y-2 wrapper. On error set aria-invalid (red border) and show the message as text-sm text-destructive below.',
     a11y: 'Always associate with Label via htmlFor/id.',
   }),
 }
@@ -24,5 +24,6 @@ export const WithLabel = {
   ),
 }
 export const Disabled = { args: { placeholder: 'Disabled', disabled: true } }
+export const Invalid = { args: { placeholder: 'user@example.com', defaultValue: 'not-an-email', 'aria-invalid': true } }
 export const Password = { args: { type: 'password', placeholder: 'Enter password' } }
 export const SearchStyle = { args: { placeholder: 'Search...', className: 'pl-9 bg-muted/50 border-0' } }

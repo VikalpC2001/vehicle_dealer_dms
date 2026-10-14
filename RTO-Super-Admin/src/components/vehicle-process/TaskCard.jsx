@@ -1,4 +1,4 @@
-import { User } from 'lucide-react'
+import { User, CheckCircle2 } from 'lucide-react'
 import { formatDate } from '@/lib/utils'
 import { TagChip } from './TagChip'
 
@@ -40,6 +40,13 @@ export function TaskCard({ card, onDragStart, onClick }) {
         </span>
         {card.taskDate && <span className="shrink-0">{formatDate(card.taskDate)}</span>}
       </div>
+
+      {/* Completed tasks show their completion date in a distinct (success) colour. */}
+      {card.completedAt && (
+        <p className="mt-1.5 flex items-center gap-1 text-xs font-medium text-success">
+          <CheckCircle2 className="h-3 w-3 shrink-0" /> Completed {formatDate(card.completedAt)}
+        </p>
+      )}
     </div>
   )
 }

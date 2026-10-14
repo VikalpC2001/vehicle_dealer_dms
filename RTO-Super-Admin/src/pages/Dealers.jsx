@@ -5,6 +5,7 @@ import { Plus, Edit, Trash2, Store, UserCog } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
+import { Switch } from '@/components/ui/switch'
 import { ConfirmModal } from '@/components/modals/ConfirmModal'
 import { DealerFormDialog } from '@/components/dealers/DealerFormDialog'
 import { AgentSlotsDialog } from '@/components/dealers/AgentSlotsDialog'
@@ -40,6 +41,7 @@ export default function Dealers() {
   const [editDealer, setEditDealer] = useState(null)
   const [slotsDealer, setSlotsDealer] = useState(null)
   const [deleteTarget, setDeleteTarget] = useState(null)
+  const [pauseTarget, setPauseTarget] = useState(null) // dealer awaiting the "pause access" confirmation
   const queryClient = useQueryClient()
 
   const { data, isLoading, isFetching } = useQuery({
@@ -88,6 +90,27 @@ export default function Dealers() {
     },
   })
 
+  // Pause / resume the dealer firm's access (PATCH /dealers/:id/access). Pausing signs every user
+  // of the firm out, so it goes through a confirmation; resuming applies straight away.
+  const { mutate: setAccess, isPending: accessPending } = useMutation({
+    mutationFn: ({ id, isActive }) => dealerService.setAccess(id, isActive),
+    onSuccess: (_res, vars) => {
+      toast({
+        title: vars.isActive ? 'Access resumed' : 'Access paused',
+        description: vars.isActive
+          ? 'The dealer and its users can sign in again.'
+          : 'The dealer and its users are signed out until access is resumed.',
+        variant: 'success',
+      })
+      setPauseTarget(null)
+      // Returned so the mutation stays pending (switches disabled) until the refreshed rows are in.
+      return queryClient.invalidateQueries({ queryKey: ['dealers'] })
+    },
+    onError: (err) => {
+      toast({ title: 'Failed to update access', description: getErrorMessage(err), variant: 'destructive' })
+    },
+  })
+
   const handleCreate = async (values) => {
     await createMutation.mutateAsync(values)
   }
@@ -128,6 +151,28 @@ export default function Dealers() {
         ),
       },
       {
+        key: 'isActive',
+        label: 'Access',
+        render: (row) => {
+          // Placeholder dealers have no login, so there is no access to pause.
+          if (row.isPlaceholder) return <span className="text-muted-foreground">—</span>
+          const active = row.isActive !== false
+          return (
+            <div className="flex items-center gap-2">
+              <Switch
+                checked={active}
+                disabled={accessPending}
+                onCheckedChange={(checked) =>
+                  checked ? setAccess({ id: getDealerId(row), isActive: true }) : setPauseTarget(row)
+                }
+                aria-label={`Access for ${row.firmName ?? 'dealer'}`}
+              />
+              <Badge variant={active ? 'success' : 'warning'}>{active ? 'Active' : 'Paused'}</Badge>
+            </div>
+          )
+        },
+      },
+      {
         label: 'Actions',
         render: (row) => (
           <div className="flex items-center gap-1">
@@ -155,7 +200,8 @@ export default function Dealers() {
         ),
       },
     ],
-    []
+    // The Access switch reads the mutation's pending flag, so the columns must follow it.
+    [accessPending, setAccess]
   )
 
   return (
@@ -243,6 +289,17 @@ export default function Dealers() {
         variant="destructive"
         onConfirm={() => deleteMutation.mutate(getDealerId(deleteTarget))}
         loading={deleteMutation.isPending}
+      />
+
+      <ConfirmModal
+        open={!!pauseTarget}
+        onOpenChange={() => setPauseTarget(null)}
+        title="Pause Dealer Access"
+        description={`Pause access for ${pauseTarget?.firmName ?? 'this dealer'}? All users of this firm will be signed out immediately and cannot sign in until access is resumed.`}
+        confirmLabel="Pause Access"
+        variant="destructive"
+        onConfirm={() => setAccess({ id: getDealerId(pauseTarget), isActive: false })}
+        loading={accessPending}
       />
     </div>
   )

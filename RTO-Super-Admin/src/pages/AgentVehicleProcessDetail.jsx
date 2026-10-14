@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useNavigate, useParams, useLocation } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
-import { ArrowLeft, Car, FileText, Download, Loader2, Trash2 } from 'lucide-react'
+import { ArrowLeft, Car, Trash2, Pencil } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -15,7 +15,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { ConfirmModal } from '@/components/modals/ConfirmModal'
+import { TypeConfirmModal } from '@/components/modals/TypeConfirmModal'
 import { Tabs } from '@/components/ui/tabs'
 import { AnimatedTabsList, AnimatedTabPanel } from '@/components/common/AnimatedTabs'
 import { DealPricePanel } from '@/components/vehicle-process/DealPricePanel'
@@ -23,14 +23,17 @@ import { ExpensesPanel } from '@/components/vehicle-process/ExpensesPanel'
 import { PersonsPanel } from '@/components/vehicle-process/PersonsPanel'
 import { TasksPanel } from '@/components/vehicle-process/TasksPanel'
 import { RtoReceiptPanel } from '@/components/vehicle-process/RtoReceiptPanel'
-import { PhotoGalleryDialog } from '@/components/vehicle-process/PhotoGalleryDialog'
+import { DocumentsPanel } from '@/components/vehicle-process/DocumentsPanel'
+import { VehiclePhotosPanel } from '@/components/vehicle-process/VehiclePhotosPanel'
 import { CommentsWidget } from '@/components/vehicle-process/CommentsWidget'
+import { VehicleEditDialog } from '@/components/vehicle-process/VehicleEditDialog'
 import { TagPicker } from '@/components/vehicle-process/TagPicker'
 import { vehicleProcessService } from '@/services/vehicleProcessService'
 import { agentStatusService } from '@/services/agentStatusService'
+import { VehicleAvatar } from '@/components/vehicle-process/VehicleAvatar'
+import { PhotoGalleryDialog } from '@/components/vehicle-process/PhotoGalleryDialog'
 import { getErrorMessage } from '@/lib/authErrors'
-import { formatDate } from '@/lib/utils'
-import { toAppImageUrl, isPdfUrl } from '@/lib/vehicleProcess'
+import { formatDate, formatManufacture } from '@/lib/utils'
 import { exportProcessImagesZip } from '@/lib/zip'
 import { toast } from '@/hooks/use-toast'
 
@@ -40,6 +43,7 @@ const TABS = [
   { value: 'tasks', label: 'Tasks' },
   { value: 'expenses', label: 'Expenses' },
   { value: 'documents', label: 'Documents' },
+  { value: 'vehicle-photos', label: 'Vehicle Photos' },
   { value: 'rto', label: 'RTO & RC Book' },
 ]
 
@@ -57,10 +61,11 @@ export default function AgentVehicleProcessDetail() {
   const queryClient = useQueryClient()
   const dealerName = state?.dealerName ?? 'Dealer'
   const [tab, setTab] = useState('overview')
-  const [galleryOpen, setGalleryOpen] = useState(false)
-  const [galleryIndex, setGalleryIndex] = useState(0)
   const [exporting, setExporting] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [editVehicle, setEditVehicle] = useState(false)
+  const [avatarPreviewOpen, setAvatarPreviewOpen] = useState(false)
+  const [avatarIndex, setAvatarIndex] = useState(0)
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ['vehicle-process', id, 'details'],
@@ -77,7 +82,9 @@ export default function AgentVehicleProcessDetail() {
 
   const statusMutation = useMutation({
     mutationFn: (agentStatusId) => vehicleProcessService.updateAgentStatus(id, agentStatusId),
-    onSuccess: () => {
+    // The saved status goes straight into the cache, so the dropdown shows it even if the refetch fails.
+    onSuccess: (_data, agentStatusId) => {
+      queryClient.setQueryData(['vehicle-process', id, 'details'], (old) => old && { ...old, agentStatusId })
       queryClient.invalidateQueries({ queryKey: ['vehicle-process', id, 'details'] })
       queryClient.invalidateQueries({ queryKey: ['agent-board-processes'] })
       toast({ title: 'Status updated', variant: 'success' })
@@ -91,7 +98,7 @@ export default function AgentVehicleProcessDetail() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['vehicle-processes', 'agent', dealerId] })
       queryClient.invalidateQueries({ queryKey: ['agent-board-processes'] })
-      toast({ title: 'Process deleted', variant: 'success' })
+      toast({ title: 'Process moved to Bin', variant: 'success' })
       navigate(backTo, { state: { dealerName } })
     },
     onError: (err) =>
@@ -111,7 +118,10 @@ export default function AgentVehicleProcessDetail() {
 
   const vehicle = data?.vehicle ?? {}
   const photos = data?.photos ?? []
+  const starredPhoto = (data?.vehiclePhotos ?? []).find((p) => p.isStarred) ?? (data?.vehiclePhotos ?? [])[0]
   const currentStatusId = data?.agentStatusId ?? ''
+  // While a change is saving show the status being saved; otherwise the saved one ('' = none yet).
+  const statusValue = statusMutation.isPending ? String(statusMutation.variables) : currentStatusId ? String(currentStatusId) : ''
   const vehicleRows = [
     ['Registration Number', vehicle.registrationNumber],
     ['Registration Date', vehicle.registrationDate ? formatDate(vehicle.registrationDate) : null],
@@ -120,7 +130,7 @@ export default function AgentVehicleProcessDetail() {
     ['Chassis Number', vehicle.chassisNumber],
     ['Engine Number', vehicle.engineNumber],
     ['Vehicle Type', vehicle.vehicleType],
-    ['Mfg. Month / Year', [vehicle.manufactureMonth, vehicle.manufactureYear].filter(Boolean).join(' / ')],
+    ['Mfg. Month / Year', formatManufacture(vehicle.manufactureMonth, vehicle.manufactureYear)],
   ].filter(([, value]) => value)
 
   return (
@@ -135,17 +145,30 @@ export default function AgentVehicleProcessDetail() {
           <ArrowLeft className="mr-1.5 h-4 w-4" /> Back
         </Button>
         <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-          <div className="min-w-0">
-            <h1 className="truncate text-xl font-bold">{vehicle.registrationNumber || 'Vehicle Process'}</h1>
-            <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-              <span className="truncate">{dealerName}</span>
-              {data?.processDate && <span>· Created {formatDate(data.processDate)}</span>}
+          <div className="flex min-w-0 items-center gap-3">
+            <VehicleAvatar
+              photoUrl={starredPhoto?.photoUrl}
+              className="h-16 w-16"
+              onClick={() => {
+                const photos = data?.vehiclePhotos ?? []
+                const idx = photos.findIndex((p) => p.isStarred)
+                setAvatarIndex(idx >= 0 ? idx : 0)
+                setAvatarPreviewOpen(true)
+              }}
+            />
+            <div className="min-w-0">
+              <h1 className="truncate text-xl font-bold">{vehicle.registrationNumber || 'Vehicle Process'}</h1>
+              <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                <span className="truncate">{dealerName}</span>
+                {data?.processDate && <span>· Created {formatDate(data.processDate)}</span>}
+                {data?.dealNumber && <span>· Deal No: {data.dealNumber}</span>}
+              </div>
             </div>
           </div>
           {data && (
             <div className="flex shrink-0 items-center gap-2">
               <Select
-                value={currentStatusId ? String(currentStatusId) : undefined}
+                value={statusValue}
                 onValueChange={(value) => statusMutation.mutate(value)}
                 disabled={statusMutation.isPending || statuses.length === 0}
               >
@@ -196,9 +219,16 @@ export default function AgentVehicleProcessDetail() {
           {/* Tab 1 — Vehicle info & Deal */}
           <AnimatedTabPanel value="overview" className="space-y-6">
             <Card>
-              <CardHeader className="flex-row items-center gap-2 space-y-0">
-                <Car className="h-4 w-4 text-muted-foreground" />
-                <CardTitle className="text-base">Vehicle</CardTitle>
+              <CardHeader className="flex-row items-center justify-between gap-2 space-y-0">
+                <div className="flex items-center gap-2">
+                  <Car className="h-4 w-4 text-muted-foreground" />
+                  <CardTitle className="text-base">Vehicle</CardTitle>
+                </div>
+                {data?.vehicleId && (
+                  <Button variant="outline" size="sm" onClick={() => setEditVehicle(true)}>
+                    <Pencil className="mr-2 h-4 w-4" /> Edit details
+                  </Button>
+                )}
               </CardHeader>
               <CardContent>
                 <dl className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -217,7 +247,7 @@ export default function AgentVehicleProcessDetail() {
 
           {/* Tab 2 — Seller / Owner & Buyer (+ references) */}
           <AnimatedTabPanel value="persons" className="space-y-6">
-            <PersonsPanel processId={id} dealerId={dealerId} stacked />
+            <PersonsPanel processId={id} dealerId={dealerId} stacked processDate={data?.processDate} processCreatedAt={data?.createdAt} />
 
             {(data.references?.seller || data.references?.buyer) && (
               <Card>
@@ -252,61 +282,22 @@ export default function AgentVehicleProcessDetail() {
 
           {/* Tab 5 — Documents (gallery + full-screen viewer) */}
           <AnimatedTabPanel value="documents">
-            <Card>
-              <CardHeader className="flex-row items-center justify-between space-y-0">
-                <CardTitle className="flex items-center gap-2 text-base">
-                  <FileText className="h-4 w-4 text-muted-foreground" />
-                  Documents ({photos.length})
-                </CardTitle>
-                <Button variant="outline" size="sm" onClick={handleExport} disabled={!photos.length || exporting}>
-                  {exporting ? (
-                    <><Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> Exporting…</>
-                  ) : (
-                    <><Download className="mr-1.5 h-4 w-4" /> Export ZIP</>
-                  )}
-                </Button>
-              </CardHeader>
-              <CardContent>
-                {!photos.length ? (
-                  <p className="text-sm text-muted-foreground">No documents uploaded.</p>
-                ) : (
-                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-                    {photos.map((photo, i) => (
-                      <button
-                        key={photo.processUploadPhotoId ?? photo.imageName}
-                        type="button"
-                        onClick={() => {
-                          setGalleryIndex(i)
-                          setGalleryOpen(true)
-                        }}
-                        className="group relative aspect-square overflow-hidden rounded-lg border border-border bg-muted/30 transition hover:ring-2 hover:ring-primary"
-                        aria-label={`View ${photo.category || 'document'}`}
-                      >
-                        {isPdfUrl(photo.photoUrl) ? (
-                          <div className="flex h-full w-full flex-col items-center justify-center gap-1 text-muted-foreground">
-                            <FileText className="h-8 w-8" />
-                            <span className="text-[11px] font-medium">PDF</span>
-                          </div>
-                        ) : (
-                          <img
-                            src={toAppImageUrl(photo.photoUrl)}
-                            alt={photo.category}
-                            className="h-full w-full object-cover transition duration-200 group-hover:scale-105"
-                            loading="lazy"
-                          />
-                        )}
-                        <span className="absolute inset-x-0 bottom-0 truncate bg-gradient-to-t from-black/70 to-transparent px-2 py-1.5 text-left text-xs font-medium text-white">
-                          {photo.category}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
+            <DocumentsPanel
+              photos={photos}
+              processId={id}
+              dealerId={dealerId}
+              editable
+              onExport={handleExport}
+              exporting={exporting}
+            />
           </AnimatedTabPanel>
 
-          {/* Tab 6 — RTO Receipt & RC Book */}
+          {/* Tab 6 — Vehicle photos (free-form, max 5) */}
+          <AnimatedTabPanel value="vehicle-photos">
+            <VehiclePhotosPanel vehiclePhotos={data.vehiclePhotos} processId={id} dealerId={dealerId} editable />
+          </AnimatedTabPanel>
+
+          {/* Tab 7 — RTO Receipt & RC Book */}
           <AnimatedTabPanel value="rto">
             <RtoReceiptPanel
               processId={id}
@@ -319,23 +310,34 @@ export default function AgentVehicleProcessDetail() {
         </Tabs>
       )}
 
-      <PhotoGalleryDialog
-        open={galleryOpen}
-        onOpenChange={setGalleryOpen}
-        photos={photos}
-        index={galleryIndex}
-        onIndexChange={setGalleryIndex}
-      />
-
-      <ConfirmModal
+      <TypeConfirmModal
         open={confirmDelete}
         onOpenChange={setConfirmDelete}
         title="Delete process"
-        description="This permanently removes the process and its persons, tasks, expenses, and documents. This cannot be undone."
+        description="This moves the process to the Bin. Its persons, tasks, expenses, and documents are kept and it can be restored for 7 days, after which it is permanently purged."
+        confirmWord="DELETE"
         confirmLabel="Delete"
         variant="destructive"
         onConfirm={() => deleteMutation.mutate()}
         loading={deleteMutation.isPending}
+      />
+
+      {data && (
+        <VehicleEditDialog
+          open={editVehicle}
+          onOpenChange={setEditVehicle}
+          vehicle={data.vehicle}
+          vehicleId={data.vehicleId}
+        />
+      )}
+
+      {/* Preview of the profile (starred) photo — opened by clicking the header avatar. */}
+      <PhotoGalleryDialog
+        open={avatarPreviewOpen}
+        onOpenChange={setAvatarPreviewOpen}
+        photos={data?.vehiclePhotos ?? []}
+        index={avatarIndex}
+        onIndexChange={setAvatarIndex}
       />
 
       {/* Floating comments widget — shared thread with the dealer (chat popover). */}

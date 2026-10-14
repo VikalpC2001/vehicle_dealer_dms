@@ -242,3 +242,14 @@ export async function updateStatusRanks(
     return results;
   });
 }
+
+/**
+ * Returns ALL of an agent's kanban statuses in board order (`statusRank` ascending), unpaginated.
+ * Used to label and order per-status counts.
+ */
+export async function listAllAgentStatusesForAgent(agentId: string): Promise<AgentStatus[]> {
+  return prisma.agentStatus.findMany({
+    where: { agentId },
+    orderBy: [{ statusRank: 'asc' }, { createdAt: 'asc' }],
+  });
+}

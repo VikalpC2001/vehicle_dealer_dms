@@ -5,12 +5,16 @@ const photoFields = {
   imageName: z.string().min(1, 'Image name is required').max(255),
 };
 
+/** Photo kind: a document scan/upload or a free-form vehicle photo (capped at 5 per process). */
+const kindField = z.enum(['DOCUMENT', 'VEHICLE']);
+
 const processIdField = z.string().uuid('Invalid process ID');
 
 export const createProcessUploadPhotoSchema = z.object({
   body: z.object({
     processId: processIdField,
     dealerId: z.string().uuid('Invalid dealer ID').optional(),
+    kind: kindField.optional(),
     ...photoFields,
   }),
 });
@@ -57,6 +61,9 @@ export const updateProcessUploadPhotoSchema = z.object({
 });
 
 export const deleteProcessUploadPhotoSchema = getProcessUploadPhotoByIdSchema;
+
+/** Star (set primary) a vehicle photo: params `{ id }` + optional `?dealerId`, no body. */
+export const starProcessUploadPhotoSchema = getProcessUploadPhotoByIdSchema;
 
 export type CreateProcessUploadPhotoBody = z.infer<
   typeof createProcessUploadPhotoSchema

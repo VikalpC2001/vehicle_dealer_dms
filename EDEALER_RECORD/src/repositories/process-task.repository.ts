@@ -100,7 +100,8 @@ export async function listProcessTasksForDealerBoard(
 ): Promise<ProcessTaskBoardRow[]> {
   return prisma.processTask.findMany({
     where: {
-      process: { dealerId },
+      // `deletedAt: null` keeps tasks of binned (soft-deleted) processes off the board.
+      process: { dealerId, deletedAt: null },
       ...(filters.status ? { status: filters.status } : {}),
       ...(filters.assignUserId ? { assignUserId: filters.assignUserId } : {}),
       OR: [{ completedAt: null }, { completedAt: { gte: filters.completedSince } }],
@@ -131,7 +132,8 @@ export async function listCompletedProcessTasksForDealer(
   filters: ProcessTaskHistoryFilters,
 ): Promise<{ rows: ProcessTaskBoardRow[]; total: number }> {
   const where: Prisma.ProcessTaskWhereInput = {
-    process: { dealerId },
+    // `deletedAt: null` keeps completed tasks of binned processes out of the history.
+    process: { dealerId, deletedAt: null },
     completedAt: { not: null },
     ...(filters.assignUserId ? { assignUserId: filters.assignUserId } : {}),
   };

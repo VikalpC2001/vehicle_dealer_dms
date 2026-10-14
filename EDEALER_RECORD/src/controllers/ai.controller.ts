@@ -5,7 +5,7 @@ import { AppError } from '../utils/app-error';
 
 /**
  * POST /ai/analyze-image
- * Uploads a single image file and returns Gemini structured analysis.
+ * Uploads a single RC image and sends it directly to Gemini vision. Returns `{ vehicleInfo, ownerInfo }`.
  */
 export const analyzeImageHandler = async (req: Request, res: Response): Promise<void> => {
   const file = req.file;
@@ -24,7 +24,8 @@ export const analyzeImageHandler = async (req: Request, res: Response): Promise<
 
 /**
  * POST /ai/analyze-id-proof
- * Uploads a single ID proof image and returns extracted identity/address JSON.
+ * Uploads a single ID-proof image and sends it directly to Gemini vision. Returns the extracted
+ * identity/address JSON.
  */
 export const analyzeIdProofHandler = async (req: Request, res: Response): Promise<void> => {
   const file = req.file;

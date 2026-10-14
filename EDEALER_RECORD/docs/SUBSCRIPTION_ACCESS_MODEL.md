@@ -46,14 +46,36 @@ The super admin onboards and subscribes dealers **and** agents (`Dealer.isSubscr
 
 | Model | Purpose | Key fields |
 |-------|---------|------------|
-| `Agent` | First-class agent entity (mirrors `Dealer`) | `agentId`, firm/agent/display name, optional contact, `isSubscribe` |
+| `Agent` | First-class agent entity (mirrors `Dealer`) | `agentId`, firm/agent/display name, optional contact, `isSubscribe`, `isActive` (access switch, default true) |
 | `AgentWiseUser` | user → agent link (login persona) | `userId @unique`, `agentId` |
-| `Dealer` (extended) | also represents placeholders | `isPlaceholder`, `ownerAgentId`, `connectedDealerId`, **`maxAgents`** (default 2); contact fields now nullable (kept `@unique` — Postgres allows multiple NULLs) |
+| `Dealer` (extended) | also represents placeholders | `isPlaceholder`, `ownerAgentId`, `connectedDealerId`, **`maxAgents`** (default 2), `isActive` (access switch, default true); contact fields now nullable (kept `@unique` — Postgres allows multiple NULLs) |
 | `DealerAgent` | dealer↔agent grant (the M:N) | `dealerId`, `agentId`, `status` (`ACTIVE`/`REVOKED`), `source` (`DEALER_GRANT`/`CONNECT`), `@@unique([dealerId, agentId])` |
 | `AgentStatus` | per-agent RTO kanban statuses (agent board columns) | seeded on agent create: To-Do, In Progress, Inward, Pending, Query, Complete |
 | `ProcessAssignment` | dealer assigns process+service to agent | `processId`, `dealerId` (denormalized), `agentId`, `serviceId`, `agentStatusId`, `status` (`OPEN`/`COMPLETED`/`CANCELLED`), `@@unique([processId, agentId, serviceId])` |
 
 The cap is computed as `count(DealerAgent where dealerId, status=ACTIVE, source=DEALER_GRANT)` and returned as `capInfo { maxAgents, used, overCap }` on `GET/POST /dealer-agents`.
+
+## Access switch — pause / resume a firm (built)
+
+Separate from subscriptions, the super admin has one **on/off access switch per firm**: `Dealer.isActive` and `Agent.isActive` (both default `true`, so every existing firm stays open). It is toggled with `PATCH /dealers/:id/access` and `PATCH /agents/:id/access` (body `{ isActive }`, super-admin only).
+
+While a firm is **paused** (`isActive = false`):
+
+- **No sign-in.** `issueUserAccessToken` — the single choke point behind login, token refresh, passkey login, signup OTP verification and invitation accept — refuses to issue a token for any login user of that firm.
+- **Live sessions end.** `authenticate` looks the firm up on every request (in-process cache, ~5 s TTL; a toggle is written into the cache immediately) and rejects the token on **every** guarded route, `/auth/me` included.
+- Both return **`403` / `4022`** — `Your account access has been paused. Please contact the super admin.` The frontend clears the session and shows that message in a blocking popup.
+
+**Scope.** Pausing a dealer blocks that dealer's own login users; pausing an agent blocks that agent's own login users. It does **not** cascade across firms: an agent holding a grant on a paused dealer keeps working (including on that dealer's processes), and a dealer whose agent is paused is unaffected. Placeholder dealers have no login, so the flag is inert for them. Super admins are never blocked. Nothing is deleted or revoked — resuming restores access and users simply sign in again.
+
+**How it differs from the other two flags** — three independent columns, none of which changes another:
+
+| Flag | Question it answers | Set by | Effect when "off" |
+|------|---------------------|--------|-------------------|
+| `isSubscribe` | *What may this firm do?* (commercial capability) | `PATCH /:id/subscription` | Users still sign in; subscription-gated capabilities are unavailable (e.g. `4020`, not a connect target `4098`) |
+| `approvalStatus` | *Has this self-registration been approved?* | `/registrations/:kind/:id/approve` · `/reject` | `PENDING`/`REJECTED` users can sign in and use `/auth/*` (pending screen) but get `4021` everywhere else |
+| `isActive` | *Is this firm allowed in at all, right now?* | `PATCH /:id/access` | Nobody in the firm can sign in; live sessions are rejected on every route with `4022` |
+
+> The live check is in-process, so with more than one API instance a pause reaches the *other* instances within the cache TTL (~5 s) rather than instantly.
 
 ## Deferred / not yet enforced (intentional)
 
@@ -69,5 +91,5 @@ These are designed-for but **not built**; do not assume they exist:
 ## Related
 
 - API endpoints: `docs/api/API.md` (Agents, Agent-wise-users, Agent-statuses, Dealer-agents, Process-assignments, Placeholder-dealers).
-- New error codes: `docs/API_CONVENTIONS.md` (`4035`–`4037` agent-scope, `4044` agent-not-found, `4097` cross-persona, `4098` bad-connect, `4228` grant-required, `4229` invalid-status-for-agent).
+- New error codes: `docs/API_CONVENTIONS.md` (`4035`–`4037` agent-scope, `4044` agent-not-found, `4097` cross-persona, `4098` bad-connect, `4228` grant-required, `4229` invalid-status-for-agent, `4022` firm-access-paused).
 - Backlog & sequencing: `docs/ROADMAP.md` items 2–4.

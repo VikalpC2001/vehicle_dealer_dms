@@ -177,7 +177,7 @@ export function UploadConfigPanel() {
           >
             <div className="space-y-2">
               <Label htmlFor="uploadCategoryId">Document type</Label>
-              <Select value={pick.uploadCategoryId || undefined} onValueChange={(v) => setPick((p) => ({ ...p, uploadCategoryId: v }))}>
+              <Select value={pick.uploadCategoryId ?? ''} onValueChange={(v) => setPick((p) => ({ ...p, uploadCategoryId: v }))}>
                 <SelectTrigger id="uploadCategoryId">
                   <SelectValue placeholder={available.length ? 'Select a category' : 'All categories already added'} />
                 </SelectTrigger>

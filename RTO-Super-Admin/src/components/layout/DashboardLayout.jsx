@@ -1,6 +1,5 @@
 import { useState } from 'react'
 import { Outlet, useLocation } from 'react-router-dom'
-import { AnimatePresence } from 'framer-motion'
 import { Sidebar } from './Sidebar'
 import { Topbar } from './Topbar'
 import { PageTransition } from '@/components/common/PageTransition'
@@ -28,11 +27,13 @@ export function DashboardLayout() {
       <div className={cn('flex flex-col transition-all duration-300 lg:ml-[var(--sidebar-width)]')}>
         <Topbar onMenuClick={() => setSidebarOpen(!sidebarOpen)} sidebarOpen={sidebarOpen} />
         <main className="flex-1 p-4 md:p-6 lg:p-8">
-          <AnimatePresence mode="wait">
-            <PageTransition key={location.pathname}>
-              <Outlet />
-            </PageTransition>
-          </AnimatePresence>
+          {/* Enter only, keyed on the path: the old page unmounts at once and the new one mounts once.
+              Do not wrap this in <AnimatePresence> for an exit: <Outlet /> inside the exiting wrapper
+              renders the NEW route, so every page mounted twice and, in a production build, a page
+              with animated tabs stayed invisible. */}
+          <PageTransition key={location.pathname}>
+            <Outlet />
+          </PageTransition>
         </main>
       </div>
     </div>

@@ -119,6 +119,20 @@ export const setVehicleProcessStatusSchema = z.object({
   }),
 });
 
+/**
+ * PATCH /vehicle-processes/:id/sold-date — edit the recorded sold date of a sold process. `dealerId?`
+ * is the agent/admin managed-dealer passthrough. `soldDate` is coerced from an ISO date/datetime string.
+ */
+export const setVehicleProcessSoldDateSchema = z.object({
+  params: z.object({
+    id: z.string().uuid('Invalid process ID'),
+  }),
+  body: z.object({
+    dealerId: z.string().uuid('Invalid dealer ID').optional(),
+    soldDate: z.coerce.date({ invalid_type_error: 'Invalid sold date' }),
+  }),
+});
+
 /** PUT /vehicle-processes/:id/tags — full-replace the process's tags (empty array clears them). */
 export const setVehicleProcessTagsSchema = z.object({
   params: z.object({
@@ -143,6 +157,36 @@ export const listVehicleProcessesSchema = z.object({
     tagId: z.string().uuid('Invalid tag ID').optional(),
     // Narrow by lifecycle status: a terminal value, or 'OPEN' for status-less (open) processes.
     status: z.enum(['SOLD', 'COMPLETE', 'SCRAP', 'OPEN']).optional(),
+    // Filter by processDate range (ISO datetimes, inclusive). Used by the dashboard date-range picker.
+    dateFrom: z.string().datetime('Invalid dateFrom').optional(),
+    dateTo: z.string().datetime('Invalid dateTo').optional(),
+  }),
+});
+
+/**
+ * GET /vehicle-processes/bin — paginated recycle-bin list. `dealerId?` follows the same agent/admin
+ * managed-dealer passthrough as the main list (super-admin narrows to one dealer; agent picks a dealer
+ * they manage; ignored for a dealer caller).
+ */
+export const listBinProcessesSchema = z.object({
+  query: z.object({
+    page: z.coerce.number().optional(),
+    limit: z.coerce.number().optional(),
+    dealerId: z.string().uuid('Invalid dealer ID').optional(),
+  }),
+});
+
+/**
+ * POST /vehicle-processes/bin/restore and /vehicle-processes/bin/permanent-delete — bulk multi-select
+ * bin actions. `processIds` is a non-empty (max 100) array of process UUIDs; the handler authorizes
+ * every id fail-fast before acting on any.
+ */
+export const bulkBinActionSchema = z.object({
+  body: z.object({
+    processIds: z
+      .array(z.string().uuid('Invalid process ID'))
+      .min(1, 'Select at least one')
+      .max(100),
   }),
 });
 
@@ -185,6 +229,10 @@ export const startVehicleProcessWithVehicleSchema = z.object({
       uploadPhotos: z.array(startUploadPhotoSchema).optional(),
       /** Optional; omit or use [] to skip process reference rows (buyer/seller). */
       processReferences: z.array(startProcessReferenceSchema).optional(),
+      /** Optional chosen lifecycle status; omit/null → OPEN (status-less). */
+      status: z.enum(['SOLD', 'COMPLETE', 'SCRAP']).nullable().optional(),
+      /** Optional human-facing deal/reference number captured at creation. */
+      dealNumber: z.string().trim().max(100, 'Deal number is too long').nullable().optional(),
       ...priceFields,
     })
     .superRefine(refineProcessBody),
@@ -199,7 +247,9 @@ export type UpdateVehicleProcessAgentStatusBody = z.infer<
 export type SetVehicleProcessReceiptBody = z.infer<typeof setVehicleProcessReceiptSchema>['body'];
 export type SetVehicleProcessTrackingBody = z.infer<typeof setVehicleProcessTrackingSchema>['body'];
 export type SetVehicleProcessStatusBody = z.infer<typeof setVehicleProcessStatusSchema>['body'];
+export type SetVehicleProcessSoldDateBody = z.infer<typeof setVehicleProcessSoldDateSchema>['body'];
 export type SetVehicleProcessTagsBody = z.infer<typeof setVehicleProcessTagsSchema>['body'];
+export type BulkBinActionBody = z.infer<typeof bulkBinActionSchema>['body'];
 export type StartVehicleProcessWithVehicleBody = z.infer<
   typeof startVehicleProcessWithVehicleSchema
 >['body'];

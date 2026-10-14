@@ -57,6 +57,22 @@ export async function listProcessExpensesByProcessId(
 }
 
 /**
+ * Lists all expenses for many processes in ONE query, oldest first. Used by the export to avoid an
+ * N+1 per-process expense fetch. Returns `[]` for an empty id list.
+ *
+ * @param processIds - Vehicle process UUIDs.
+ */
+export async function listProcessExpensesByProcessIds(
+  processIds: string[],
+): Promise<ProcessExpense[]> {
+  if (processIds.length === 0) return [];
+  return prisma.processExpense.findMany({
+    where: { processId: { in: processIds } },
+    orderBy: { createdAt: 'asc' },
+  });
+}
+
+/**
  * Updates a process-expense row.
  * @param expenseId - Expense UUID.
  * @param data - New label / amount / category.

@@ -12,6 +12,8 @@ import {
 import { raiseAgentSlotsHandler } from '../controllers/dealer-agent-slots.controller';
 import { setDealerSubscriptionHandler } from '../controllers/subscription.controller';
 import { setSubscriptionSchema } from '../validations/subscription.validation';
+import { setDealerAccessHandler } from '../controllers/firm-access.controller';
+import { setFirmAccessSchema } from '../validations/firm-access.validation';
 import {
   createDealerSchema,
   listDealersSchema,
@@ -61,6 +63,13 @@ router.patch(
   '/:id/subscription',
   validate(setSubscriptionSchema),
   asyncHandler(setDealerSubscriptionHandler),
+);
+
+/** Super-admin: pause/resume a dealer's access (paused = no sign-in, live sessions rejected). */
+router.patch(
+  '/:id/access',
+  validate(setFirmAccessSchema),
+  asyncHandler(setDealerAccessHandler),
 );
 
 router.delete(

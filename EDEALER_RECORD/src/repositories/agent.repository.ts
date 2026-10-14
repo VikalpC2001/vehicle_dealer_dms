@@ -181,6 +181,29 @@ export async function setAgentSubscription(
   });
 }
 
+/** Sets an agent's access switch (`isActive`; `false` = paused) — super-admin access management. */
+export async function setAgentAccess(agentId: string, isActive: boolean): Promise<Agent> {
+  return prisma.agent.update({
+    where: { agentId },
+    data: { isActive },
+  });
+}
+
+/**
+ * Lean access lookup: reads only `isActive` by primary key. Called by `authenticate` on the hot
+ * path (through the firm-access cache), so it must stay a single-column read.
+ *
+ * @returns The flag, or `null` when the agent does not exist.
+ */
+export async function findAgentAccessById(
+  agentId: string,
+): Promise<Pick<Agent, 'isActive'> | null> {
+  return prisma.agent.findUnique({
+    where: { agentId },
+    select: { isActive: true },
+  });
+}
+
 /**
  * Sets an agent's self-registration approval state (and optional reason for a rejection).
  */

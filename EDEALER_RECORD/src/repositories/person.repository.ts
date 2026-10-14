@@ -274,6 +274,11 @@ export async function changeBuyerTx(data: ChangeBuyerData): Promise<Person> {
         where: { processId: data.processId, personType: 'BUYER', status: 'ACTIVE' },
         data: { status: 'CANCELLED' },
       });
+      // Stamp the change date — only when a buyer was actually REPLACED (an active one existed).
+      await tx.vehicleProcess.update({
+        where: { processId: data.processId },
+        data: { buyerChangedAt: new Date() },
+      });
     }
 
     const buyer = await tx.person.create({

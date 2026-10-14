@@ -1,8 +1,7 @@
 import api from '@/services/api'
-import { TOKEN_KEY, REFRESH_TOKEN_KEY, OTP_PURPOSE } from '@/lib/constants'
+import { TOKEN_KEY, REFRESH_TOKEN_KEY, USER_KEY, OTP_PURPOSE } from '@/lib/constants'
 import { getErrorMessage } from '@/lib/authErrors'
-
-const USER_KEY = 'rto_admin_user'
+import { isAccessPausedError } from '@/lib/accessPaused'
 
 function getStorage(rememberMe) {
   return rememberMe ? localStorage : sessionStorage
@@ -119,8 +118,10 @@ export const authService = {
           const storage = getTokenStorage() ?? localStorage
           if (payload?.token) storage.setItem(TOKEN_KEY, payload.token)
           if (payload?.refreshToken) storage.setItem(REFRESH_TOKEN_KEY, payload.refreshToken)
-        } catch {
-          // keep the current token; app routes will retry via the 401 interceptor
+        } catch (err) {
+          // Paused in the meantime: the interceptor has already wiped the session — don't re-store the user.
+          if (isAccessPausedError(err)) throw err
+          // otherwise keep the current token; app routes will retry via the 401 interceptor
         }
       }
     }

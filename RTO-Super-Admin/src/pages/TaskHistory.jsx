@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { CheckCheck } from 'lucide-react'
+import { ArrowLeft, CheckCheck } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Switch } from '@/components/ui/switch'
 import {
@@ -132,6 +134,12 @@ export default function TaskHistory() {
             <Switch checked={mine} onCheckedChange={changeMine} aria-label="My tasks" />
             My tasks
           </label>
+
+          <Button variant="outline" asChild>
+            <Link to="/dealer/board">
+              <ArrowLeft className="mr-2 h-4 w-4" /> Task Board
+            </Link>
+          </Button>
         </div>
       </motion.div>
 

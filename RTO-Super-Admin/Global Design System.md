@@ -423,7 +423,7 @@ The system uses **restrained shadows**. Never stack multiple shadow layers.
 
 Defined in `Sidebar.jsx` — icons must match `NAV_ITEMS` in `constants.js`:
 
-`LayoutDashboard`, `Users`, `FileText`, `CreditCard`, `Bell`, `Activity`, `Settings`
+`LayoutDashboard`, `Inbox`, `Store`, `UserCog`, `ClipboardList`, `FileStack`, `MapPin`, `Users`, `CreditCard`, `Bell`, `Activity`, `Settings`
 
 ---
 
@@ -438,10 +438,9 @@ Animations are **functional, not decorative**. They communicate state changes, g
 #### Page Transition
 
 ```jsx
-// PageTransition.jsx
+// PageTransition.jsx — enter only (no exit: the old page unmounts at once)
 initial: { opacity: 0, y: 12 }
 animate: { opacity: 1, y: 0 }
-exit:    { opacity: 0, y: -8 }
 duration: 0.3s, ease: 'easeOut'
 ```
 
@@ -549,6 +548,7 @@ animate: { opacity: 1, scale: 1 }
 | Text | `text-sm font-medium` |
 | Placeholder | `text-muted-foreground` |
 | Focus | `ring-2 ring-ring`, no outline |
+| Invalid | `aria-invalid` → `border-destructive`, focus `ring-destructive` |
 | Disabled | `opacity-50`, `cursor-not-allowed` |
 
 **Search input variant** (`SearchInput.jsx`):
@@ -1011,7 +1011,7 @@ Always use `StatusBadge` for entity statuses. Never hardcode status colors in pa
 ### Validation Display
 
 - Error text: `text-sm text-destructive` directly below field
-- No error borders on inputs — rely on text feedback
+- Invalid inputs: set `aria-invalid` on the `Input` — it gets `border-destructive` and a destructive focus ring, alongside the error text
 - Password strength: `Progress` bar + `text-xs text-muted-foreground` label
 
 ### Password Strength Colors

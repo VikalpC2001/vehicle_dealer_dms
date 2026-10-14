@@ -10,8 +10,11 @@ import { PreviousBuyerDialog } from './PreviousBuyerDialog'
 import { DocumentPreviewDialog } from './DocumentPreviewDialog'
 import { personService } from '@/services/personService'
 import { getErrorMessage } from '@/lib/authErrors'
-import { cn } from '@/lib/utils'
+import { cn, formatDate } from '@/lib/utils'
 import { toast } from '@/hooks/use-toast'
+
+/** Persons created within this window of the process are treated as creation-time (show the deal date). */
+const CREATION_WINDOW_MS = 5000
 
 function getPersonId(person) {
   return person?.personId ?? person?.id
@@ -43,8 +46,10 @@ const DIALOG_TITLES = {
  * @param {string} [props.dealerId] - Managed dealer scope when an agent edits a placeholder's process.
  * @param {boolean} [props.stacked] - Render Seller then Buyer stacked one-per-row (a list) instead of
  *   the default side-by-side two-column grid.
+ * @param {string} [props.processDate] - the process's deal date (shown for creation-time parties).
+ * @param {string} [props.processCreatedAt] - when the process row was created (to detect creation-time parties).
  */
-export function PersonsPanel({ processId, dealerId, stacked = false }) {
+export function PersonsPanel({ processId, dealerId, stacked = false, processDate, processCreatedAt }) {
   const queryClient = useQueryClient()
   const [dialog, setDialog] = useState(null) // { mode, person? }
   const [personNonce, setPersonNonce] = useState(0) // bumped per open → remounts PersonFormDialog fresh
@@ -73,6 +78,20 @@ export function PersonsPanel({ processId, dealerId, stacked = false }) {
   const seller = persons.find((p) => p.personType === 'SELLER' && p.status !== 'CANCELLED')
   const activeBuyer = persons.find((p) => p.personType === 'BUYER' && p.status === 'ACTIVE')
   const cancelledBuyers = persons.filter((p) => p.personType === 'BUYER' && p.status === 'CANCELLED')
+
+  // The date shown in a party's container: the deal (process) date when the party was recorded AT
+  // process creation, otherwise when the party was actually added/changed (their row's createdAt).
+  const partyDate = (person) => {
+    if (!person?.createdAt) return null
+    const created = new Date(person.createdAt)
+    if (
+      processCreatedAt &&
+      Math.abs(created.getTime() - new Date(processCreatedAt).getTime()) < CREATION_WINDOW_MS
+    ) {
+      return processDate ?? person.createdAt
+    }
+    return person.createdAt
+  }
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ['persons', processId] })
@@ -147,6 +166,9 @@ export function PersonsPanel({ processId, dealerId, stacked = false }) {
               <p className="font-medium">{seller.personName}</p>
               {seller.mobileNumber && <p className="text-muted-foreground">{seller.mobileNumber}</p>}
               {seller.address && <p className="text-muted-foreground">{seller.address}</p>}
+              {partyDate(seller) && (
+                <p className="pt-1 text-right text-[11px] text-muted-foreground">{formatDate(partyDate(seller))}</p>
+              )}
             </div>
           ) : (
             <p className="text-muted-foreground">No seller recorded yet.</p>
@@ -185,6 +207,9 @@ export function PersonsPanel({ processId, dealerId, stacked = false }) {
                   <p className="font-medium">{activeBuyer.personName}</p>
                   {activeBuyer.mobileNumber && <p className="text-muted-foreground">{activeBuyer.mobileNumber}</p>}
                   {activeBuyer.address && <p className="truncate text-muted-foreground">{activeBuyer.address}</p>}
+                  {partyDate(activeBuyer) && (
+                    <p className="pt-1 text-right text-[11px] text-muted-foreground">{formatDate(partyDate(activeBuyer))}</p>
+                  )}
                 </div>
               ) : (
                 <p className="text-muted-foreground">No buyer recorded yet. Add one when the vehicle is sold.</p>

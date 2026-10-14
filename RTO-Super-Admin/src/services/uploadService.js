@@ -1,5 +1,6 @@
 import axios from 'axios'
 import api from '@/services/api'
+import { toWebpFile } from '@/lib/image'
 import { DOCUMENT_MIME_TYPES, MAX_UPLOAD_MB } from '@/lib/vehicleProcess'
 
 function unwrap(response) {
@@ -84,19 +85,25 @@ export const uploadService = {
   },
 
   /**
-   * Convenience: validate → generate → PUT. Returns { fileKey, publicUrl }.
+   * Convenience: (convert image → WebP) → validate → generate → PUT. Returns { fileKey, publicUrl }.
    * Throws on validation failure or network error (callers surface per-file state).
+   *
+   * Every raster image is converted to WebP on the client here — the single chokepoint all upload
+   * screens funnel through — so nothing is stored as PNG/JPEG regardless of where the upload started.
+   * PDFs (and already-WebP files) pass through untouched; a conversion failure falls back to the
+   * original bytes so an upload is never blocked.
    *
    * @param {File} file
    */
   async uploadImage(file) {
-    const check = validateImageFile(file)
+    const prepared = await toWebpFile(file)
+    const check = validateImageFile(prepared)
     if (!check.ok) throw new Error(check.error)
     const { uploadUrl, fileKey, publicUrl } = await this.generate({
-      fileName: file.name,
-      contentType: file.type,
+      fileName: prepared.name,
+      contentType: prepared.type,
     })
-    await this.putFile(uploadUrl, file)
+    await this.putFile(uploadUrl, prepared)
     return { fileKey, publicUrl }
   },
 }

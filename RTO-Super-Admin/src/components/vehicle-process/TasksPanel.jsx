@@ -81,7 +81,9 @@ export function TasksPanel({ processId, dealerId }) {
     return map
   }, [users])
 
-  const invalidate = () => queryClient.invalidateQueries({ queryKey: ['process-tasks', processId] })
+  // Broad prefix so a task change here also refreshes the task board (['process-tasks', 'board', …])
+  // and the ticket dialog, keeping every task view in sync without a page refresh.
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: ['process-tasks'] })
 
   const createMutation = useMutation({
     mutationFn: (values) => processTaskService.create({ ...values, processId }, dealerId),

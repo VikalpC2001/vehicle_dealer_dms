@@ -12,8 +12,9 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { ImageCropperDialog } from './ImageCropperDialog'
+import { IdScanOverlay } from './IdScanOverlay'
 import { uploadService, validateImageFile } from '@/services/uploadService'
-import { aiService, getAiErrorMessage } from '@/services/aiService'
+import { aiService } from '@/services/aiService'
 import { DOCUMENT_MIME_TYPES, isPdfFile, mapIdProofToPerson } from '@/lib/vehicleProcess'
 import { getErrorMessage } from '@/lib/authErrors'
 import { toast } from '@/hooks/use-toast'
@@ -42,10 +43,19 @@ const EMPTY = { personName: '', mobileNumber: '', address: '' }
 export function ChangeBuyerDialog({ open, onOpenChange, onSubmit, loading }) {
   const [form, setForm] = useState(EMPTY)
   const [busy, setBusy] = useState(false) // OCR/upload in progress
+  const [scanState, setScanState] = useState(null) // 'scanning' | 'failed' → ID-scan overlay
   const [buyerIdImageName, setBuyerIdImageName] = useState('')
   const [idFileName, setIdFileName] = useState('')
   const [cropFile, setCropFile] = useState(null)
   const fileRef = useRef(null)
+  // Set when the user bails to manual entry mid-scan, so a late OCR result doesn't clobber their
+  // typing or re-show the overlay.
+  const scanDismissedRef = useRef(false)
+
+  const dismissScan = () => {
+    scanDismissedRef.current = true
+    setScanState(null)
+  }
 
   const applyOcr = (fields) =>
     setForm((f) => ({
@@ -88,18 +98,30 @@ export function ChangeBuyerDialog({ open, onOpenChange, onSubmit, loading }) {
   const handleCropped = async (cropped) => {
     setCropFile(null)
     setBusy(true)
+    scanDismissedRef.current = false
+    setScanState('scanning') // show the ID-scan animation while OCR runs
     try {
       try {
         const data = await aiService.analyzeIdProof(cropped)
-        applyOcr(mapIdProofToPerson(data))
-        toast({ title: 'Details captured from ID', variant: 'success' })
-      } catch (err) {
-        // OCR is best-effort — keep the file even if reading fails.
-        toast({ title: 'Could not read ID', description: getAiErrorMessage(err) })
+        const fields = mapIdProofToPerson(data)
+        if (scanDismissedRef.current) {
+          // User already bailed to manual entry — don't overwrite what they're typing.
+        } else if (fields.name || fields.address) {
+          applyOcr(fields)
+          setScanState(null) // got something → hide the animation
+          toast({ title: 'Details captured from ID', variant: 'success' })
+        } else {
+          // The backend returns 200 with all-null fields for an unreadable ID (not an error), so an
+          // empty result means nothing was read → offer manual entry instead of a false "captured".
+          setScanState('failed')
+        }
+      } catch {
+        // OCR is best-effort — keep the file; the overlay offers manual entry.
+        if (!scanDismissedRef.current) setScanState('failed')
       }
       const { fileKey } = await uploadService.uploadImage(cropped)
       setBuyerIdImageName(fileKey)
-      setIdFileName('buyer-id.jpg')
+      setIdFileName('buyer-id.webp')
     } catch (err) {
       toast({ title: 'ID upload failed', description: getErrorMessage(err) || err.message, variant: 'destructive' })
     } finally {
@@ -136,6 +158,7 @@ export function ChangeBuyerDialog({ open, onOpenChange, onSubmit, loading }) {
               the new buyer&apos;s ID to auto-fill their name &amp; address.
             </DialogDescription>
           </DialogHeader>
+          <div className="relative">
           <form onSubmit={submit} className="space-y-4">
             <div className="space-y-2">
               <Label>Buyer ID (auto-fills from an image)</Label>
@@ -214,13 +237,16 @@ export function ChangeBuyerDialog({ open, onOpenChange, onSubmit, loading }) {
               {loading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Changing…</> : 'Change Buyer'}
             </Button>
           </form>
+          {/* ID-scan animation while an uploaded ID is OCR-read; offers manual entry on failure. */}
+          <IdScanOverlay status={scanState} onManual={dismissScan} />
+          </div>
         </DialogContent>
       </Dialog>
 
       <ImageCropperDialog
         open={Boolean(cropFile)}
         file={cropFile}
-        fileName="buyer-id.jpg"
+        fileName="buyer-id.webp"
         onCancel={() => setCropFile(null)}
         onCropped={handleCropped}
       />

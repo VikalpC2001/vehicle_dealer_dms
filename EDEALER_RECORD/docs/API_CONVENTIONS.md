@@ -8,6 +8,7 @@ How every endpoint in this backend is shaped. The per-endpoint reference is [api
 - Protected routes require `Authorization: Bearer <accessToken>`. Set on a router with `router.use(authenticate)`.
 - Access tokens carry `{ sub, email, role, dealerId?, purpose }`. `purpose: 'PASSWORD_RESET'` tokens are rejected by `authenticate` and accepted only by `authenticatePasswordReset` (used solely by `POST /auth/reset-password`).
 - The frontend implements a refresh flow against `/auth/refresh` on `401`.
+- `authenticate` also does a live (short-cached) check that the token's linked dealer/agent firm is not **paused** by the super-admin; a paused firm gets **`403` / `4022`** on every guarded route (no `/auth` exemption). It is deliberately not a `401`: the frontend must sign the user out, not refresh.
 
 ## Response envelopes
 
@@ -61,6 +62,7 @@ List endpoints accept `?page=&limit=` (query). `parsePagination` clamps to **pag
 | `4016` | 401 | Password-reset session required/invalid | auth.middleware |
 | `4017` | 401 | Invalid/expired refresh token (bad signature, expired, wrong `purpose`, or unknown user) | auth (`POST /auth/refresh`) |
 | `4020` | 402 | Agent subscription required for independent management (own placeholder dealers) | managed-dealer-scope (`assertAgentSubscribed`) |
+| `4022` | 403 | Firm access paused by the super-admin (`Dealer.isActive` / `Agent.isActive` = `false`) — sign-in refused and live sessions rejected on **every** authenticated route, `/auth` included. Message: `Your account access has been paused. Please contact the super admin.` | firm-access service (`issueUserAccessToken` sign-in gate + auth middleware live check) |
 | `4032` | 403 | `dealerId` does not match your session | dealer-scope |
 | `4033` | 403 | Account not linked to a dealer | dealer-scope |
 | `4034` | 403 | No access to this resource (wrong dealer) | dealer-scope |
@@ -73,7 +75,7 @@ List endpoints accept `?page=&limit=` (query). `parsePagination` clamps to **pag
 | `4063` | 403 | Agent-only process write (RTO receipt / RC-book tracking) — caller is not the agent working this process | managed-dealer-scope (`assertAgentCanWriteProcess`) |
 | `4064` | 422 | An ACTIVE buyer already exists on the process — use "change buyer" (cancel + add) instead | person service |
 | `4040` | 404 | Record not found (Prisma P2025) | error.middleware |
-| `4044` | 404 | Agent not found | agent / dealer-agent services |
+| `4044` | 404 | Agent not found — or, for `GET /process-assignments/by-agent/:agentId[/summary]`, an agent the dealer has never granted | agent / dealer-agent / process-assignment services |
 | `4047` | 404 | Vehicle not found — or, for `GET /vehicles/history`, not handled by this dealer (the 404-not-an-existence-oracle guard) | vehicle service |
 | `4060` | 404 | Process expense not found | process-expense service |
 | `4061` | 404 | Agent invitation not found | agent-invitation service |
@@ -92,6 +94,8 @@ List endpoints accept `?page=&limit=` (query). `parsePagination` clamps to **pag
 | `4111` | 409 | Agent invitation expired | agent-invitation service |
 | `4112` | 409 | Email/mobile already an existing agent — grant instead | agent-invitation service |
 | `4113` | 409 | An OPEN (status-less) vehicle process already exists for this vehicle under this dealer — at most one open process per vehicle per dealer (set/clear its status first) | vehicle-process service (create / start / reopen) |
+| `4114` | 409 | A vehicle can have at most 5 photos (`kind='VEHICLE'` cap on `POST /process-upload-photos`) | process-upload-photo service |
+| `4115` | 409 | Only vehicle photos can be starred (`PATCH /process-upload-photos/:id/star` on a `DOCUMENT` row) | process-upload-photo service |
 | `4021` | 403 | Account pending approval / registration declined — self-registered dealer/agent whose firm is not `APPROVED` (blocked on all non-`/auth` routes) | auth middleware |
 | `4065` | 404 | Registration (dealer/agent) not found | registration service |
 | `4066` | 404 | Dealer task template not found | dealer-task-template service |
@@ -111,6 +115,7 @@ List endpoints accept `?page=&limit=` (query). `parsePagination` clamps to **pag
 | `4233` | 422 | Switch target is already an ACTIVE grant | dealer-agent-switch service |
 | `4234` | 422 | Process has no agent board, or the target status is not the agent's (agent-board move) | vehicle-process service |
 | `4235` | 422 | One or more tagIds do not belong to this dealer (set-process-tags) | vehicle-process service |
+| `4236` | 422 | `assignmentId` on a ledger entry does not belong to the entry's dealer↔agent pair (or does not exist) | khata service |
 | `4056` | 422 | Cannot reverse a reversal entry | khata service |
 | `4057` | 422 | Placeholder khata: agent must own the placeholder (independent ledger) or connect it to a real dealer first | khata service |
 | `4058` | 422 | Khata account is already settled (nothing to settle) | khata service |

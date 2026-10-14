@@ -14,6 +14,7 @@ import {
 } from '@/components/ui/select'
 import { Checkbox } from '@/components/ui/checkbox'
 import { ConfirmModal } from '@/components/modals/ConfirmModal'
+import { AgentStatusPill } from '@/components/vehicle-process/AgentStatusPill'
 import { processAssignmentService } from '@/services/processAssignmentService'
 import { dealerAgentService } from '@/services/dealerAgentService'
 import { rtoServiceService } from '@/services/rtoServiceService'
@@ -191,24 +192,7 @@ export function AssignAgentPanel({ processId }) {
                         {assignment.service.shortName || assignment.service.serviceName}
                       </Badge>
                     )}
-                    {assignment.agentStatus && (
-                      <span
-                        className="inline-flex items-center gap-1.5 rounded-full border border-border px-2.5 py-0.5 text-xs font-medium"
-                        style={
-                          assignment.agentStatus.colour
-                            ? { borderColor: assignment.agentStatus.colour, color: assignment.agentStatus.colour }
-                            : undefined
-                        }
-                      >
-                        {assignment.agentStatus.colour && (
-                          <span
-                            className="h-2 w-2 rounded-full"
-                            style={{ backgroundColor: assignment.agentStatus.colour }}
-                          />
-                        )}
-                        {assignment.agentStatus.statusName}
-                      </span>
-                    )}
+                    <AgentStatusPill status={assignment.agentStatus} />
                     {assignment.cost && (
                       <Badge variant="secondary" className="gap-1">
                         <Wallet className="h-3 w-3" />
@@ -262,7 +246,7 @@ export function AssignAgentPanel({ processId }) {
           >
             <div className="space-y-2">
               <Label>Agent</Label>
-              <Select value={form.agentId || undefined} onValueChange={(v) => setForm((f) => ({ ...f, agentId: v }))}>
+              <Select value={form.agentId ?? ''} onValueChange={(v) => setForm((f) => ({ ...f, agentId: v }))}>
                 <SelectTrigger>
                   <SelectValue placeholder="Select an agent" />
                 </SelectTrigger>

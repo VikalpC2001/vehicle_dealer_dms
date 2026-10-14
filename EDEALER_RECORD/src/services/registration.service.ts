@@ -10,6 +10,7 @@ import { createDealerWiseUserWithUser, getPrimaryDealerIdForUser } from './deale
 import { createAgentWiseUserWithUser, getPrimaryAgentIdForUser } from './agent-wise-user.service';
 import { issueSignupOtp } from './otp-auth.service';
 import { sendTransactionalEmail } from './email.service';
+import { renderEmailHtml } from '../utils/email-template';
 import { AppError } from '../utils/app-error';
 import { parsePagination, buildPaginationMeta } from '../utils/pagination';
 import type { PaginationQuery, PaginatedResult } from '../types';
@@ -33,28 +34,35 @@ export interface RegistrationDto {
 
 // --- emails ---------------------------------------------------------------------------------------
 
-async function sendApprovedEmail(to: string, name: string, kind: RegistrationKind): Promise<void> {
+async function sendApprovedEmail(to: string, kind: RegistrationKind): Promise<void> {
   const loginLink = `${config.FRONTEND_URL}/login`;
+  const account = kind === 'dealer' ? 'dealer' : 'RTO agent';
   await sendTransactionalEmail({
     to,
     subject: 'Your account has been approved',
-    text:
-      `Hi ${name},\n\nGood news — your ${kind === 'dealer' ? 'dealer' : 'RTO agent'} account has been ` +
-      `approved. You can now sign in and access your panel:\n${loginLink}\n\nWelcome aboard!`,
-    html:
-      `<p>Hi ${name},</p><p>Good news — your ${kind === 'dealer' ? 'dealer' : 'RTO agent'} account has ` +
-      `been approved. <a href="${loginLink}">Sign in here</a> to access your panel.</p>`,
+    text: `Your ${account} account is approved. Sign in: ${loginLink}`,
+    html: renderEmailHtml({
+      preheader: `Your ${account} account is approved.`,
+      badge: { label: 'Approved', tone: 'success' },
+      title: 'Your account is approved',
+      message: `Your ${account} account is ready. Sign in to get started.`,
+      action: { label: 'Sign in', url: loginLink },
+    }),
   });
 }
 
-async function sendRejectedEmail(to: string, name: string, reason: string | null): Promise<void> {
-  const reasonLine = reason ? `\n\nReason: ${reason}` : '';
+async function sendRejectedEmail(to: string, reason: string | null): Promise<void> {
   await sendTransactionalEmail({
     to,
     subject: 'Update on your registration',
-    text:
-      `Hi ${name},\n\nThank you for registering. After review, we're unable to approve your account ` +
-      `at this time.${reasonLine}\n\nYou're welcome to reach out if you have questions.`,
+    text: `Your registration was not approved.${reason ? ` Reason: ${reason}` : ''}`,
+    html: renderEmailHtml({
+      preheader: 'Your registration was not approved.',
+      badge: { label: 'Not approved', tone: 'danger' },
+      title: 'Registration not approved',
+      message: 'We could not approve your registration.',
+      note: reason ? { label: 'Reason', text: reason, tone: 'danger' } : undefined,
+    }),
   });
 }
 
@@ -280,7 +288,7 @@ export async function approveRegistration(kind: RegistrationKind, id: string): P
     await agentRepository.setAgentApproval(id, 'APPROVED', null);
   }
   if (firm.emailId) {
-    await sendApprovedEmail(firm.emailId, firm.applicantName, kind).catch(() => undefined);
+    await sendApprovedEmail(firm.emailId, kind).catch(() => undefined);
   }
   return { ...firm, approvalStatus: 'APPROVED', approvalReason: null };
 }
@@ -302,7 +310,7 @@ export async function rejectRegistration(
     await agentRepository.setAgentApproval(id, 'REJECTED', trimmed);
   }
   if (firm.emailId) {
-    await sendRejectedEmail(firm.emailId, firm.applicantName, trimmed).catch(() => undefined);
+    await sendRejectedEmail(firm.emailId, trimmed).catch(() => undefined);
   }
   return { ...firm, approvalStatus: 'REJECTED', approvalReason: trimmed };
 }

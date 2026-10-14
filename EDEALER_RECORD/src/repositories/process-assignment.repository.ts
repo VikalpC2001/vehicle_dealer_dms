@@ -7,6 +7,7 @@ import type {
   LedgerEntry,
   Prisma,
   ProcessAssignment,
+  VehicleProcessStatus,
 } from '@prisma/client';
 import {
   postEntryOnTx,
@@ -104,6 +105,67 @@ export type ProcessAssignmentDetailRow = ProcessAssignmentWithServiceStatus & {
 };
 
 /**
+ * Assignment shape for a DEALER's view of the work given to one agent: the chosen RTO service, the
+ * agent's own kanban status, and the source vehicle process with its vehicle, lifecycle status, the
+ * agent-entered RC-book tracking number / RTO receipt key, and tags.
+ */
+export type ProcessAssignmentForDealerAgent = ProcessAssignment & {
+  service: {
+    serviceId: string;
+    serviceName: string;
+    shortName: string;
+  };
+  agentStatus: {
+    statusId: string;
+    statusName: string;
+    colour: string | null;
+  } | null;
+  process: {
+    processId: string;
+    status: VehicleProcessStatus | null;
+    dealNumber: string | null;
+    processDate: Date | null;
+    trackingNumber: string | null;
+    receiptImageName: string | null;
+    vehicle: {
+      registrationNumber: string;
+      make: string | null;
+      model: string | null;
+      manufactureYear: number | null;
+    } | null;
+    processTags: {
+      tag: { tagId: string; tagName: string; colour: string | null };
+    }[];
+  };
+};
+
+/** `agentStatusId` filter value selecting assignments the agent has not put in any status yet. */
+export const NO_AGENT_STATUS_FILTER = 'none';
+
+/** How many distinct words of a search the "every word matches some field" rule looks at. */
+const MAX_SEARCH_WORDS = 6;
+
+/**
+ * Filter for a dealer's list of the work given to one agent. `dealerId` + `agentId` are the
+ * tenant scope and always apply; `search` matches the vehicle registration number, make or model
+ * and the service name; `agentStatusId` narrows to one of the agent's kanban statuses, or to
+ * assignments with no status when it is {@link NO_AGENT_STATUS_FILTER}.
+ */
+export interface DealerAgentAssignmentFilter {
+  dealerId: string;
+  agentId: string;
+  search?: string | null;
+  agentStatusId?: string | null;
+}
+
+/** The ids a dealer-agent summary is computed from: one row per live assignment of the pair. */
+export interface DealerAgentAssignmentKey {
+  assignmentId: string;
+  processId: string;
+  agentStatusId: string | null;
+}
+
+/**
  * Data required to create a process assignment. `dealerId` is denormalized for dealer-scope;
  * `agentStatusId` defaults the kanban column; `note` and `assignedByUserId` are optional.
  */
@@ -172,6 +234,29 @@ const agentAssignmentInclude = {
         },
       },
       processTags: { select: { tag: { select: { tagId: true, tagName: true, colour: true } } } },
+    },
+  },
+} as const;
+
+/** Shared `include` for a dealer's list of the work given to one agent (service, status, process). */
+const dealerAgentAssignmentInclude = {
+  service: { select: serviceSelect },
+  agentStatus: { select: agentStatusSelect },
+  process: {
+    select: {
+      processId: true,
+      status: true,
+      dealNumber: true,
+      processDate: true,
+      trackingNumber: true,
+      receiptImageName: true,
+      vehicle: {
+        select: { registrationNumber: true, make: true, model: true, manufactureYear: true },
+      },
+      processTags: {
+        select: { tag: { select: { tagId: true, tagName: true, colour: true } } },
+        orderBy: { tag: { tagName: 'asc' } },
+      },
     },
   },
 } as const;
@@ -251,13 +336,18 @@ async function upsertAssignmentWithCostOnTx(
       agentStatusId: a.agentStatusId ?? null,
       note: a.note ?? null,
       assignedByUserId: a.assignedByUserId ?? null,
+      // A re-assignment is a new assignment: it is dated, and listed, as the day it was given again.
+      createdAt: new Date(),
     },
     include: assignmentInclude,
   });
 
   // Reactivation clean-slate: reverse any still-live cost left over from a prior life of this
   // triple so a reactivated assignment never carries a stale cost (a fresh create has none).
-  const priorCost = await findActiveAssignmentCostEntryOnTx(tx, assignment.assignmentId);
+  const priorCost = await findActiveAssignmentCostEntryOnTx(tx, assignment.assignmentId, {
+    dealerId: a.dealerId,
+    agentId: a.agentId,
+  });
   if (priorCost) {
     await reverseEntryOnTx(tx, priorCost.ledgerEntryId, params.postedByUserId ?? null, RoleType.DEALER);
   }
@@ -337,7 +427,10 @@ export async function updateAssignmentCost(params: {
   postedByUserId?: string | null;
 }): Promise<{ costEntry: LedgerEntry | null }> {
   return prisma.$transaction(async (tx) => {
-    const current = await findActiveAssignmentCostEntryOnTx(tx, params.assignmentId);
+    const current = await findActiveAssignmentCostEntryOnTx(tx, params.assignmentId, {
+      dealerId: params.dealerId,
+      agentId: params.agentId,
+    });
 
     const metaOnly = {
       entryDate: params.entryDate ?? undefined,
@@ -475,7 +568,8 @@ export async function listOpenAssignmentsForPair(
   agentId: string,
 ): Promise<OpenAssignmentForPair[]> {
   return prisma.processAssignment.findMany({
-    where: { dealerId, agentId, status: 'OPEN' },
+    // Skip open work whose source process is in the recycle bin (soft-deleted).
+    where: { dealerId, agentId, status: 'OPEN', process: { is: { deletedAt: null } } },
     orderBy: { createdAt: 'desc' },
     include: {
       service: { select: serviceSelect },
@@ -536,6 +630,8 @@ export async function listAssignmentsForAgent(
     where: {
       agentId,
       status: { not: 'CANCELLED' },
+      // Hide assignments whose source process was soft-deleted (moved to the dealer's recycle bin).
+      process: { is: { deletedAt: null } },
       ...(dealerId ? { dealerId } : {}),
     },
     orderBy: { createdAt: 'desc' },
@@ -606,5 +702,128 @@ export async function findAssignmentForProcessAgent(
 ): Promise<ProcessAssignment | null> {
   return prisma.processAssignment.findFirst({
     where: { processId, agentId, status: { not: 'CANCELLED' } },
+  });
+}
+
+/**
+ * The live work a dealer has given an agent: the pair's assignments that are not CANCELLED and
+ * whose source process is not in the recycle bin. Every dealer-agent list/summary query starts here,
+ * so the list, its page count and the totals always describe the same rows.
+ */
+const dealerAgentAssignmentScope = (
+  dealerId: string,
+  agentId: string,
+): Prisma.ProcessAssignmentWhereInput => ({
+  dealerId,
+  agentId,
+  status: { not: 'CANCELLED' },
+  process: { is: { deletedAt: null } },
+});
+
+/**
+ * The fields one search text is matched against: the service name / short name and the vehicle make
+ * and model (raw text, with LIKE wildcards escaped so `%` and `_` are searched literally), and the
+ * registration number (stored normalized, so matched against the text stripped of spaces and
+ * punctuation). All case-insensitive.
+ */
+function assignmentSearchFilters(text: string): Prisma.ProcessAssignmentWhereInput[] {
+  const like = text.replace(/[\\%_]/g, '\\$&');
+  const vehicleFields: Prisma.VehicleWhereInput[] = [
+    { make: { contains: like, mode: 'insensitive' } },
+    { model: { contains: like, mode: 'insensitive' } },
+  ];
+  const registration = text.replace(/[^a-zA-Z0-9]/g, '');
+  if (registration) {
+    vehicleFields.push({ registrationNumber: { contains: registration, mode: 'insensitive' } });
+  }
+  // One filter per relation (the fields OR-ed inside it) keeps the statement small.
+  return [
+    {
+      service: {
+        is: {
+          OR: [
+            { serviceName: { contains: like, mode: 'insensitive' } },
+            { shortName: { contains: like, mode: 'insensitive' } },
+          ],
+        },
+      },
+    },
+    { process: { is: { vehicle: { is: { OR: vehicleFields } } } } },
+  ];
+}
+
+/** Builds the `where` for a dealer-agent assignment list: the pair scope plus the optional filters. */
+function buildDealerAgentAssignmentWhere(
+  filter: DealerAgentAssignmentFilter,
+): Prisma.ProcessAssignmentWhereInput {
+  const where = dealerAgentAssignmentScope(filter.dealerId, filter.agentId);
+
+  if (filter.agentStatusId === NO_AGENT_STATUS_FILTER) {
+    where.agentStatusId = null;
+  } else if (filter.agentStatusId) {
+    where.agentStatusId = filter.agentStatusId;
+  }
+
+  const term = filter.search?.trim();
+  if (term) {
+    // The whole term may match one field ("name transfer"), or — when it has several words — every
+    // word may match some field ("maruti swift" = make + model, exactly as the row prints them).
+    const or = assignmentSearchFilters(term);
+    // Distinct words only, and at most MAX_SEARCH_WORDS of them: every word adds joins, and a
+    // search of dozens of one-letter words would otherwise build a statement that hurts the database.
+    const words = [...new Set(term.toLowerCase().split(/\s+/).filter(Boolean))].slice(
+      0,
+      MAX_SEARCH_WORDS,
+    );
+    if (words.length > 1) {
+      or.push({ AND: words.map((word) => ({ OR: assignmentSearchFilters(word) })) });
+    }
+    // AND-ed with the scope (the scope's own `process` filter stays in force).
+    where.AND = [{ OR: or }];
+  }
+  return where;
+}
+
+/**
+ * Lists one page of the live work a dealer has given an agent (newest first), each row with its RTO
+ * service, the agent's kanban status, and the source process (vehicle, lifecycle status, tracking
+ * number, receipt key, tags). Also returns the total number of rows matching the filter.
+ *
+ * @param filter - Tenant scope (`dealerId`, `agentId`) plus optional `search` / `agentStatusId`.
+ * @param page - Prisma `skip` / `take` for the requested page.
+ */
+export async function listAssignmentsForDealerAgent(
+  filter: DealerAgentAssignmentFilter,
+  page: { skip: number; take: number },
+): Promise<{ items: ProcessAssignmentForDealerAgent[]; total: number }> {
+  const where = buildDealerAgentAssignmentWhere(filter);
+  const [items, total] = await Promise.all([
+    prisma.processAssignment.findMany({
+      where,
+      // `assignmentId` breaks ties so pages never overlap (a multi-service assign shares a timestamp).
+      orderBy: [{ createdAt: 'desc' }, { assignmentId: 'asc' }],
+      skip: page.skip,
+      take: page.take,
+      include: dealerAgentAssignmentInclude,
+    }),
+    prisma.processAssignment.count({ where }),
+  ]);
+  return { items, total };
+}
+
+/**
+ * Returns the ids of ALL live assignments a dealer has given an agent (unfiltered, unpaginated):
+ * the assignment, its process and its agent status. The service derives the totals from these.
+ *
+ * @param dealerId - Resolved dealer scope.
+ * @param agentId - The agent whose assigned work is being summarised.
+ */
+export async function listAssignmentKeysForDealerAgent(
+  dealerId: string,
+  agentId: string,
+): Promise<DealerAgentAssignmentKey[]> {
+  return prisma.processAssignment.findMany({
+    where: dealerAgentAssignmentScope(dealerId, agentId),
+    select: { assignmentId: true, processId: true, agentStatusId: true },
   });
 }

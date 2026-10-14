@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
@@ -6,10 +6,11 @@ import { Link, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { Loader2, ArrowLeft, ShieldCheck } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
+import { OtpInput } from '@/components/ui/otp-input'
 import { Label } from '@/components/ui/label'
 import { authService } from '@/services/authService'
 import { usePasswordReset } from '@/context/PasswordResetContext'
+import { getErrorCode } from '@/lib/authErrors'
 import { toast } from '@/hooks/use-toast'
 
 const schema = z.object({
@@ -22,18 +23,21 @@ const schema = z.object({
 export function VerifyOtpForm() {
   const [loading, setLoading] = useState(false)
   const [resending, setResending] = useState(false)
+  const [wrongCode, setWrongCode] = useState(false) // red boxes after a failed verification, until edited
   const navigate = useNavigate()
   const { email, setResetToken } = usePasswordReset()
 
-  const { handleSubmit, setValue, watch, formState: { errors } } = useForm({
+  const inputRef = useRef(null)
+
+  const { handleSubmit, setValue, getValues, watch, formState: { errors } } = useForm({
     resolver: zodResolver(schema),
     defaultValues: { otp: '' },
   })
 
   const otp = watch('otp')
 
-  const handleOtpChange = (e) => {
-    const value = e.target.value.replace(/\D/g, '').slice(0, 6)
+  const handleOtpChange = (value) => {
+    setWrongCode(false)
     setValue('otp', value, { shouldValidate: value.length === 6, shouldDirty: true })
   }
 
@@ -45,6 +49,9 @@ export function VerifyOtpForm() {
       toast({ title: 'Code verified', description: result.message, variant: 'success' })
       navigate('/forgot-password/reset')
     } catch (err) {
+      // 4007 = the server rejected this reset code. Red only for that (not a network or server
+      // error), and only if that code is still what the boxes hold.
+      if (getErrorCode(err) === 4007 && getValues('otp') === code) setWrongCode(true)
       toast({
         title: 'Verification failed',
         description: authService.getErrorMessage(err, 'Invalid or expired reset code'),
@@ -59,6 +66,10 @@ export function VerifyOtpForm() {
     setResending(true)
     try {
       const result = await authService.resendOtp({ email })
+      // The previous code no longer works, so start the boxes afresh for the new one.
+      setValue('otp', '')
+      setWrongCode(false)
+      inputRef.current?.focus()
       toast({ title: 'Code sent', description: result.message, variant: 'success' })
     } catch (err) {
       toast({
@@ -91,15 +102,14 @@ export function VerifyOtpForm() {
       <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
         <div className="space-y-2">
           <Label htmlFor="otp">6-digit code</Label>
-          <Input
+          <OtpInput
+            ref={inputRef}
             id="otp"
-            inputMode="numeric"
-            autoComplete="one-time-code"
-            placeholder="000000"
-            maxLength={6}
-            className="text-center text-2xl tracking-[0.5em] font-bold"
-            onChange={handleOtpChange}
             value={otp}
+            onChange={handleOtpChange}
+            invalid={wrongCode || !!errors.otp}
+            className="justify-start"
+            autoFocus
           />
           {errors.otp && <p className="text-sm text-destructive">{errors.otp.message}</p>}
         </div>

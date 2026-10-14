@@ -4,6 +4,7 @@ import { AuthProvider } from '@/context/AuthContext'
 import { PasswordResetProvider } from '@/context/PasswordResetContext'
 import { ThemeProvider } from '@/context/ThemeContext'
 import { ProtectedRoute } from '@/components/common/ProtectedRoute'
+import { AccessPausedNotice } from '@/components/common/AccessPausedNotice'
 import { DashboardLayout } from '@/components/layout/DashboardLayout'
 import { Toaster } from '@/components/ui/toaster'
 
@@ -17,7 +18,6 @@ import Dealers from '@/pages/Dealers'
 import Dashboard from '@/pages/Dashboard'
 import Users from '@/pages/Users'
 import UserDetails from '@/pages/UserDetails'
-import Requests from '@/pages/Requests'
 import Subscriptions from '@/pages/Subscriptions'
 import Notifications from '@/pages/Notifications'
 import ActivityLogs from '@/pages/ActivityLogs'
@@ -27,8 +27,10 @@ import NoAccess from '@/pages/NoAccess'
 import NotFound from '@/pages/NotFound'
 import DealerDashboard from '@/pages/DealerDashboard'
 import VehicleProcesses from '@/pages/VehicleProcesses'
+import ExportProcessDetails from '@/pages/ExportProcessDetails'
 import CreateVehicleProcess from '@/pages/CreateVehicleProcess'
 import VehicleProcessDetail from '@/pages/VehicleProcessDetail'
+import DealerBin from '@/pages/DealerBin'
 import TaskBoard from '@/pages/TaskBoard'
 import TaskHistory from '@/pages/TaskHistory'
 import VehicleHistory from '@/pages/VehicleHistory'
@@ -37,6 +39,7 @@ import Agents from '@/pages/Agents'
 import RtoServices from '@/pages/RtoServices'
 import DocumentCategories from '@/pages/DocumentCategories'
 import DealerAgents from '@/pages/DealerAgents'
+import DealerAgentWork from '@/pages/DealerAgentWork'
 import RolesPermissions from '@/pages/RolesPermissions'
 import AgentDashboard from '@/pages/AgentDashboard'
 import AgentBoard from '@/pages/AgentBoard'
@@ -46,6 +49,7 @@ import AgentDealers from '@/pages/AgentDealers'
 import AgentDealerVehicles from '@/pages/AgentDealerVehicles'
 import AgentCreateVehicleProcess from '@/pages/AgentCreateVehicleProcess'
 import AgentVehicleProcessDetail from '@/pages/AgentVehicleProcessDetail'
+import AgentBin from '@/pages/AgentBin'
 import AgentSettings from '@/pages/AgentSettings'
 import Ledger from '@/pages/Ledger'
 import AgentOnboarding from '@/pages/AgentOnboarding'
@@ -91,7 +95,6 @@ export default function App() {
                 <Route path="/state-city" element={<StateCity />} />
                 <Route path="/users" element={<Users />} />
                 <Route path="/users/:id" element={<UserDetails />} />
-                <Route path="/requests" element={<Requests />} />
                 <Route path="/subscriptions" element={<Subscriptions />} />
                 <Route path="/notifications" element={<Notifications />} />
                 <Route path="/activity" element={<ActivityLogs />} />
@@ -102,13 +105,16 @@ export default function App() {
               <Route element={<ProtectedRoute allowedRoles={['dealer']}><DashboardLayout /></ProtectedRoute>}>
                 <Route path="/dealer/dashboard" element={<DealerDashboard />} />
                 <Route path="/dealer/processes" element={<VehicleProcesses />} />
+                <Route path="/dealer/export" element={<ExportProcessDetails />} />
                 <Route path="/dealer/processes/new" element={<CreateVehicleProcess />} />
                 <Route path="/dealer/processes/:id" element={<VehicleProcessDetail />} />
+                <Route path="/dealer/bin" element={<DealerBin />} />
                 <Route path="/dealer/board" element={<TaskBoard />} />
                 <Route path="/dealer/tasks/history" element={<TaskHistory />} />
                 <Route path="/dealer/vehicle-history" element={<VehicleHistory />} />
                 <Route path="/dealer/settings" element={<DealerSettings />} />
                 <Route path="/dealer/agents" element={<DealerAgents />} />
+                <Route path="/dealer/agents/:agentId" element={<DealerAgentWork />} />
                 <Route path="/dealer/roles" element={<RolesPermissions />} />
                 <Route path="/dealer/ledger" element={<Ledger />} />
               </Route>
@@ -122,6 +128,7 @@ export default function App() {
                 <Route path="/agent/dealers/:dealerId/vehicles" element={<AgentDealerVehicles />} />
                 <Route path="/agent/dealers/:dealerId/vehicles/new" element={<AgentCreateVehicleProcess />} />
                 <Route path="/agent/dealers/:dealerId/vehicles/:id" element={<AgentVehicleProcessDetail />} />
+                <Route path="/agent/bin" element={<AgentBin />} />
                 <Route path="/agent/settings" element={<AgentSettings />} />
                 <Route path="/agent/ledger" element={<Ledger />} />
               </Route>
@@ -137,6 +144,8 @@ export default function App() {
 
               <Route path="*" element={<NotFound />} />
             </Routes>
+            {/* Forced sign-out popup (firm paused by the super admin) — outside <Routes> so it shows on every route. */}
+            <AccessPausedNotice />
           </BrowserRouter>
           <Toaster />
           </PasswordResetProvider>

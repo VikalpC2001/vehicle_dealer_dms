@@ -9,6 +9,8 @@ import {
   getAssignmentDetailForAgent,
   loadAssignmentForAgent,
   updateAssignmentAgentStatus,
+  listAssignmentsForDealerAgent,
+  getDealerAgentAssignmentSummary,
 } from '../services/process-assignment.service';
 import { sendSuccess } from '../utils/api-response';
 import { resolveDealerIdFromRequest } from '../utils/dealer-scope';
@@ -23,6 +25,8 @@ import type {
   AgentAssignmentsQuery,
   UpdateAgentStatusParams,
   UpdateAgentStatusBody,
+  DealerAgentAssignmentsParams,
+  DealerAgentAssignmentsQuery,
 } from '../validations/process-assignment.validation';
 
 /**
@@ -121,4 +125,37 @@ export async function updateAgentStatusHandler(req: Request, res: Response): Pro
   const agentId = resolveAgentIdFromRequest(req);
   const assignment = await updateAssignmentAgentStatus(agentId, id, body.agentStatusId);
   sendSuccess(res, 'Assignment status updated', assignment);
+}
+
+/**
+ * GET /process-assignments/by-agent/:agentId
+ * Paginated list of the work the caller's dealer has assigned to one agent — each row with its RTO
+ * service, the agent's kanban status, the live ledger cost and the source process (dealer-scoped).
+ */
+export async function listDealerAgentAssignmentsHandler(req: Request, res: Response): Promise<void> {
+  const { agentId } = req.params as unknown as DealerAgentAssignmentsParams;
+  const query = req.query as unknown as DealerAgentAssignmentsQuery;
+  const dealerId = resolveDealerIdFromRequest(req);
+  const result = await listAssignmentsForDealerAgent(dealerId, agentId, {
+    page: query.page,
+    limit: query.limit,
+    search: query.search?.trim() || null,
+    agentStatusId: query.agentStatusId ?? null,
+  });
+  sendSuccess(res, 'Agent assignments retrieved', result);
+}
+
+/**
+ * GET /process-assignments/by-agent/:agentId/summary
+ * Totals for the work the caller's dealer has assigned to one agent: the agent summary, the grant
+ * status, assignment / process / cost totals and a count per agent status (dealer-scoped).
+ */
+export async function getDealerAgentAssignmentSummaryHandler(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  const { agentId } = req.params as unknown as DealerAgentAssignmentsParams;
+  const dealerId = resolveDealerIdFromRequest(req);
+  const summary = await getDealerAgentAssignmentSummary(dealerId, agentId);
+  sendSuccess(res, 'Agent assignment summary retrieved', summary);
 }

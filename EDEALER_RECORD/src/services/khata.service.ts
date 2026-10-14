@@ -1,6 +1,7 @@
 import { StatusCodes } from 'http-status-codes';
 import type { KhataAccount, LedgerEntry, RoleType } from '@prisma/client';
 import * as khataRepository from '../repositories/khata.repository';
+import * as processAssignmentRepository from '../repositories/process-assignment.repository';
 import { AppError } from '../utils/app-error';
 
 /** Which side of the book the caller is. */
@@ -199,6 +200,18 @@ export async function postEntry(
   const pair = await resolveWritePair(persona, selfId, body.counterpartyId);
   if (!pair.authorizedByOwnership) {
     await assertActivePairGrant(pair.dealerId, pair.agentId);
+  }
+  if (body.assignmentId) {
+    // An entry may only be linked to an assignment of this same dealer-agent book. A missing id and
+    // another book's id get the same answer, so this is not a way to probe for assignment ids.
+    const assignment = await processAssignmentRepository.findAssignmentById(body.assignmentId);
+    if (!assignment || assignment.dealerId !== pair.dealerId || assignment.agentId !== pair.agentId) {
+      throw new AppError(
+        'This assignment does not belong to this ledger',
+        StatusCodes.UNPROCESSABLE_ENTITY,
+        4236,
+      );
+    }
   }
   const { account, entry } = await khataRepository
     .postEntry({

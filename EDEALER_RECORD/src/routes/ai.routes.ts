@@ -5,6 +5,7 @@ import { uploadSingleImage } from '../middlewares/upload.middleware';
 
 const router = Router();
 
+// Both endpoints: image → Gemini vision → structured JSON.
 router.post('/analyze-image', uploadSingleImage, asyncHandler(analyzeImageHandler));
 router.post('/analyze-id-proof', uploadSingleImage, asyncHandler(analyzeIdProofHandler));
 

@@ -1209,6 +1209,24 @@
             "url": "{{baseUrl}}/api/v1/dealers/{{dealerId}}/subscription",
             "description": "Super-admin toggles a dealer's isSubscribe (subscribed dealers get the dealer site + can be a connect target)."
           }
+        },
+        {
+          "name": "Set Dealer Access - pause/resume (super-admin)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"isActive\": false\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/dealers/{{dealerId}}/access",
+            "description": "Super-admin pauses (isActive: false) or resumes (isActive: true) a dealer's access. While paused, the dealer's login users cannot sign in and live sessions get 403 / 4022 on every authenticated route. Returns { id, isActive }. Errors: 4038 not super-admin, 4043 dealer not found, 4220 invalid body/params."
+          }
         }
       ]
     },
@@ -1267,7 +1285,7 @@
             "method": "GET",
             "header": [],
             "url": "{{baseUrl}}/api/v1/dealer-task-statuses",
-            "description": "GET /dealer-task-statuses \u2014 task statuses for the dealer in the access token, ordered by statusRank."
+            "description": "GET /dealer-task-statuses — task statuses for the dealer in the access token, ordered by statusRank."
           }
         },
         {
@@ -1825,10 +1843,10 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"registrationNumber\": \"MH12AB1234\",\n  \"chassisNumber\": null,\n  \"engineNumber\": null,\n  \"vehicleType\": \"Car\",\n  \"make\": \"Maruti\",\n  \"model\": \"Swift\",\n  \"registrationDate\": \"2020-01-15\",\n  \"manufactureMonth\": 6,\n  \"manufactureYear\": 2019,\n  \"processDate\": \"2026-04-05T12:00:00.000Z\",\n  \"persons\": [\n    {\n      \"personName\": \"John Seller\",\n      \"address\": null,\n      \"mobileNumber\": \"+919999999999\",\n      \"personType\": \"SELLER\"\n    },\n    {\n      \"personName\": \"Jane Buyer\",\n      \"address\": null,\n      \"mobileNumber\": \"+918888888888\",\n      \"personType\": \"BUYER\"\n    }\n  ],\n  \"uploadPhotos\": [\n    {\n      \"category\": \"RC Front\",\n      \"imageName\": \"rc-front.png\"\n    },\n    {\n      \"category\": \"RC Back\",\n      \"imageName\": \"rc-back.png\"\n    }\n  ],\n  \"processReferences\": [\n    {\n      \"referenceId\": \"{{referenceId}}\",\n      \"referenceType\": \"SELL\"\n    }\n  ]\n}"
+              "raw": "{\n  \"registrationNumber\": \"MH12AB1234\",\n  \"chassisNumber\": null,\n  \"engineNumber\": null,\n  \"vehicleType\": \"Car\",\n  \"make\": \"Maruti\",\n  \"model\": \"Swift\",\n  \"registrationDate\": \"2020-01-15\",\n  \"manufactureMonth\": 6,\n  \"manufactureYear\": 2019,\n  \"processDate\": \"2026-04-05T12:00:00.000Z\",\n  \"status\": \"SOLD\",\n  \"dealNumber\": \"DEAL-2026-0042\",\n  \"persons\": [\n    {\n      \"personName\": \"John Seller\",\n      \"address\": null,\n      \"mobileNumber\": \"+919999999999\",\n      \"personType\": \"SELLER\"\n    },\n    {\n      \"personName\": \"Jane Buyer\",\n      \"address\": null,\n      \"mobileNumber\": \"+918888888888\",\n      \"personType\": \"BUYER\"\n    }\n  ],\n  \"uploadPhotos\": [\n    {\n      \"category\": \"RC Front\",\n      \"imageName\": \"rc-front.png\"\n    },\n    {\n      \"category\": \"RC Back\",\n      \"imageName\": \"rc-back.png\"\n    }\n  ],\n  \"processReferences\": [\n    {\n      \"referenceId\": \"{{referenceId}}\",\n      \"referenceType\": \"SELL\"\n    }\n  ]\n}"
             },
             "url": "{{baseUrl}}/api/v1/vehicle-processes/start",
-            "description": "One-shot start: upsert vehicle, create Pending process, optional persons[], uploadPhotos[] (category+imageName), processReferences[] (referenceId+referenceType BUY|SELL). dealerId from JWT."
+            "description": "One-shot start: upsert vehicle, create process, optional persons[], uploadPhotos[] (category+imageName), processReferences[] (referenceId+referenceType BUY|SELL), optional status (SOLD|COMPLETE|SCRAP, default null=OPEN) + dealNumber (<=100). dealerId from JWT. 4113 (one open per vehicle per dealer) only fires for an OPEN create."
           }
         },
         {
@@ -1891,16 +1909,88 @@
               "raw": "{\n  \"vehicleId\": \"{{vehicleId}}\",\n  \"processDate\": \"2026-03-16T10:30:00.000Z\",\n  \"persons\": [\n    {\n      \"personName\": \"John Seller\",\n      \"address\": null,\n      \"mobileNumber\": \"+919999999999\",\n      \"personType\": \"SELLER\"\n    }\n  ]\n}"
             },
             "url": "{{baseUrl}}/api/v1/vehicle-processes/{{processId}}",
-            "description": "Update a vehicle process. `persons` is OPTIONAL \u2014 omit it for a status- or price-only change and persons (incl. CANCELLED buyers kept for history) are left untouched; person management lives in the /persons endpoints (incl. change-buyer). When persons IS sent it is a full replace (non-empty, single seller/buyer). Omitted prices are nulled, so re-send prices to preserve them."
+            "description": "Update a vehicle process. `persons` is OPTIONAL — omit it for a status- or price-only change and persons (incl. CANCELLED buyers kept for history) are left untouched; person management lives in the /persons endpoints (incl. change-buyer). When persons IS sent it is a full replace (non-empty, single seller/buyer). Omitted prices are nulled, so re-send prices to preserve them."
           }
         },
         {
-          "name": "Delete Vehicle Process",
+          "name": "Delete Vehicle Process (soft → recycle bin)",
           "request": {
             "method": "DELETE",
             "header": [],
             "url": "{{baseUrl}}/api/v1/vehicle-processes/{{processId}}",
-            "description": "Delete a vehicle process by ID (persons are deleted via cascade)."
+            "description": "SOFT delete: moves the process to the recycle bin (sets deletedAt). The whole process is hidden from all active reads, but its children (persons, docs, photos, tasks, expenses, tags, references, comments, assignments) stay in the DB and return intact on restore. Permanently purged (hard cascade delete) 7 days after deletion (daily server sweep + lazy purge on bin view). A process already in the bin returns 4050."
+          }
+        },
+        {
+          "name": "List Recycle Bin",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/vehicle-processes/bin?page=1&limit=50",
+            "description": "Paginated recycle bin (soft-deleted processes), newest deletion first; viewing first lazily purges rows older than 7 days. Each item: { processId, registrationNumber, ownerName, deletedAt, purgeAt (deletedAt+7d), daysLeft }. Scope like the list endpoint: dealer sees own; agent passes &dealerId= (a managed dealer); super-admin sees all or &dealerId=."
+          }
+        },
+        {
+          "name": "List Agent Recycle Bin (agent)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/vehicle-processes/agent-bin?page=1&limit=50",
+            "description": "Agent-scoped, agent-global. Caller agent's own recycle bin across ALL placeholder dealers they own (dealer.isPlaceholder && ownerAgentId === agent), newest deletion first; viewing first lazily purges rows older than 7 days. Same item shape as GET /vehicle-processes/bin: { processId, registrationNumber, ownerName, deletedAt, purgeAt (deletedAt+7d), daysLeft }. Non-agent callers get an empty paginated result. Restore/permanent by processId via the /restore and /permanent endpoints. Mirrors GET /vehicle-processes/agent-board."
+          }
+        },
+        {
+          "name": "Restore Vehicle Process",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/vehicle-processes/{{processId}}/restore",
+            "description": "Restore a soft-deleted process from the recycle bin (clears deletedAt). Its untouched children reappear whole. No-op if already active. Errors: 4050 not found; 4034 wrong dealer; 4039 agent does not manage this dealer."
+          }
+        },
+        {
+          "name": "Permanently Delete Vehicle Process",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/vehicle-processes/{{processId}}/permanent",
+            "description": "PERMANENT hard delete: removes the process and cascade-deletes ALL its children immediately (active or already binned). Irreversible. After the DB delete, the process's whole per-process upload folder (uploads/{registration}_{processId}/) and every image under it are best-effort recursively deleted (a missing/undeletable folder never fails the delete). Errors: 4050 not found; 4034 wrong dealer; 4039 agent does not manage this dealer."
+          }
+        },
+        {
+          "name": "Bulk Restore Vehicle Processes",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"processIds\": [\"{{processId}}\"]\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/vehicle-processes/bin/restore",
+            "description": "Bulk-restore soft-deleted processes from the recycle bin (multi-select). processIds: 1-100 process UUIDs. Two-pass for safety: every id is authorized first (fail-fast - if any is missing or unauthorized, nothing is changed), then each is restored. Response: { count }. Errors: 4220 invalid body; 4050 a process not found; 4034 wrong dealer; 4039 agent does not manage this dealer."
+          }
+        },
+        {
+          "name": "Bulk Permanently Delete Vehicle Processes",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"processIds\": [\"{{processId}}\"]\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/vehicle-processes/bin/permanent-delete",
+            "description": "Bulk permanently hard-delete processes (multi-select). processIds: 1-100 process UUIDs. Cascade-deletes all children and best-effort deletes each process's upload folder (as DELETE :id/permanent does). Two-pass for safety: every id is authorized first (fail-fast - if any is missing or unauthorized, nothing is deleted), then each is permanently deleted. Response: { count }. Errors: 4220 invalid body; 4050 a process not found; 4034 wrong dealer; 4039 agent does not manage this dealer."
           }
         },
         {
@@ -1910,6 +2000,68 @@
             "header": [],
             "url": "{{baseUrl}}/api/v1/vehicle-processes/agent-board",
             "description": "Agent-scoped. Caller agent's own (agent-created / placeholder-dealer) processes for the agent board, each with agent-kanban status, vehicle reg, source dealer, and tags ([{ tagId, tagName, colour }]). Pairs with GET /process-assignments/agent."
+          }
+        },
+        {
+          "name": "Export Vehicle Processes (Excel/PDF)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/vehicle-processes/export?format=excel&sections=vehicle,persons,deal,amount,documents,vehicleImages",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "vehicle-processes",
+                "export"
+              ],
+              "query": [
+                {
+                  "key": "format",
+                  "value": "excel",
+                  "description": "excel | pdf (required)"
+                },
+                {
+                  "key": "sections",
+                  "value": "vehicle,persons,deal,amount,documents,vehicleImages",
+                  "description": "Comma-separated subset; empty/absent = all"
+                },
+                {
+                  "key": "dateFrom",
+                  "value": "",
+                  "description": "ISO datetime, inclusive lower bound on the date field; omit with dateTo for current-month default",
+                  "disabled": true
+                },
+                {
+                  "key": "dateTo",
+                  "value": "",
+                  "description": "ISO datetime, inclusive upper bound on the date field",
+                  "disabled": true
+                },
+                {
+                  "key": "dateField",
+                  "value": "soldDate",
+                  "description": "processDate (default) | soldDate — which date column the range filters on",
+                  "disabled": true
+                },
+                {
+                  "key": "statuses",
+                  "value": "OPEN,SOLD",
+                  "description": "Comma-separated OPEN,SOLD,COMPLETE,SCRAP to include; empty/all = every status (OR-ed)",
+                  "disabled": true
+                },
+                {
+                  "key": "dealerId",
+                  "value": "",
+                  "description": "Managed-dealer passthrough (agent/super-admin); ignored for a dealer caller",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Streams an Excel workbook or PDF of the caller's vehicle processes over a processDate range (current month when both dateFrom/dateTo are omitted), with only the selected sections. Binary attachment (not the JSON envelope). Dealer-scoped like GET /vehicle-processes. Stored WebP images are transcoded to JPEG and embedded (Excel: Documents/Vehicle Images sheets; PDF: image appendix). Capped at 500 processes; response headers X-Export-Count / X-Export-Truncated. In Postman use 'Send and Download' to save the file. Errors: 4220 invalid query; 4032/4033/4039/4226 dealer-scope."
           }
         },
         {
@@ -2109,7 +2261,7 @@
               "raw": "{\n  \"processId\": \"{{processId}}\",\n  \"personName\": \"Jane Buyer\",\n  \"address\": null,\n  \"mobileNumber\": \"+918888888888\",\n  \"personType\": \"BUYER\",\n  \"idImageName\": null\n}"
             },
             "url": "{{baseUrl}}/api/v1/persons",
-            "description": "Add a person to a vehicle process. dealerId from JWT; optional body dealerId for ADMIN. processId must belong to that dealer. Adding a BUYER while an ACTIVE buyer already exists returns 422 (code 4064) \u2014 use \"Change Buyer\" instead. Optional idImageName (an uploaded fileKey) is stored as the person's ID photo (category 'Buyer ID'/'Seller ID'), relocated into the process folder and linked to them so it shows in the process Documents."
+            "description": "Add a person to a vehicle process. dealerId from JWT; optional body dealerId for ADMIN. processId must belong to that dealer. Adding a BUYER while an ACTIVE buyer already exists returns 422 (code 4064) — use \"Change Buyer\" instead. Optional idImageName (an uploaded fileKey) is stored as the person's ID photo (category 'Buyer ID'/'Seller ID'), relocated into the process folder and linked to them so it shows in the process Documents."
           }
         },
         {
@@ -2141,7 +2293,7 @@
               "raw": "{\n  \"processId\": \"{{processId}}\",\n  \"personName\": \"New Buyer\",\n  \"address\": null,\n  \"mobileNumber\": \"+917777777777\",\n  \"buyerIdImageName\": null\n}"
             },
             "url": "{{baseUrl}}/api/v1/persons/change-buyer",
-            "description": "Atomically cancel the process's current ACTIVE buyer (soft \u2014 kept for history with their ID photo) and add this new ACTIVE buyer. Optional buyerIdImageName (an uploaded fileKey) is linked to the new buyer as a 'Buyer ID' photo and relocated into the process folder. dealerId from JWT; optional body dealerId for ADMIN. Returns 201 with the new buyer."
+            "description": "Atomically cancel the process's current ACTIVE buyer (soft — kept for history with their ID photo) and add this new ACTIVE buyer. Optional buyerIdImageName (an uploaded fileKey) is linked to the new buyer as a 'Buyer ID' photo and relocated into the process folder. dealerId from JWT; optional body dealerId for ADMIN. Returns 201 with the new buyer."
           }
         },
         {
@@ -2232,10 +2384,28 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"processId\": \"{{processId}}\",\n  \"category\": \"RC\",\n  \"imageName\": \"rc_front.jpg\"\n}"
+              "raw": "{\n  \"processId\": \"{{processId}}\",\n  \"category\": \"RC\",\n  \"imageName\": \"rc_front.jpg\",\n  \"kind\": \"DOCUMENT\"\n}"
             },
             "url": "{{baseUrl}}/api/v1/process-upload-photos",
-            "description": "Single row: processId, category, imageName. dealerId from JWT."
+            "description": "Single row: processId, category, imageName, optional kind (DOCUMENT|VEHICLE, default DOCUMENT). dealerId from JWT. The flat imageName is relocated into the process folder. kind=VEHICLE is capped at 5 per process (409 4114)."
+          }
+        },
+        {
+          "name": "Create vehicle photo (kind=VEHICLE)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"processId\": \"{{processId}}\",\n  \"category\": \"Vehicle Photo\",\n  \"imageName\": \"vehicle_front.jpg\",\n  \"kind\": \"VEHICLE\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/process-upload-photos",
+            "description": "Free-form vehicle photo. Max 5 per process — the 6th returns 409 4114. Shown separately as data.vehiclePhotos on the process details endpoint."
           }
         },
         {
@@ -2289,7 +2459,16 @@
               "raw": "{\n  \"category\": \"RC\",\n  \"imageName\": \"rc_front_v2.jpg\"\n}"
             },
             "url": "{{baseUrl}}/api/v1/process-upload-photos/{{processUploadPhotoId}}",
-            "description": "Replace category and imageName."
+            "description": "Replace the photo. A new imageName is relocated into the process folder and the OLD file's bytes are removed (best-effort). Same imageName = category-only update. kind is immutable."
+          }
+        },
+        {
+          "name": "Star vehicle photo",
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/process-upload-photos/{{processUploadPhotoId}}/star",
+            "description": "Mark a VEHICLE-kind photo as the process's starred (primary/profile) photo. Atomically clears the star on every other vehicle photo (at most one starred per process). Only vehicle photos can be starred (409 4115 otherwise). No body."
           }
         },
         {
@@ -2298,7 +2477,7 @@
             "method": "DELETE",
             "header": [],
             "url": "{{baseUrl}}/api/v1/process-upload-photos/{{processUploadPhotoId}}",
-            "description": "Delete one row."
+            "description": "Delete one row and best-effort remove the underlying file (unless another row references the same image key). If the deleted row was the starred vehicle photo, the oldest remaining vehicle photo is auto-promoted to starred."
           }
         }
       ]
@@ -2945,6 +3124,24 @@
             "url": "{{baseUrl}}/api/v1/agents/{{agentId}}/subscription",
             "description": "Super-admin toggles an agent's isSubscribe (subscribed agents can independently manage placeholder dealers' data)."
           }
+        },
+        {
+          "name": "Set Agent Access - pause/resume (super-admin)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"isActive\": false\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/agents/{{agentId}}/access",
+            "description": "Super-admin pauses (isActive: false) or resumes (isActive: true) an agent's access. While paused, the agent's login users cannot sign in and live sessions get 403 / 4022 on every authenticated route. Returns { id, isActive }. Errors: 4038 not super-admin, 4044 agent not found, 4220 invalid body/params."
+          }
         }
       ]
     },
@@ -3525,6 +3722,24 @@
           }
         },
         {
+          "name": "List Assignments By Agent (dealer)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/process-assignments/by-agent/{{agentId}}?page=1&limit=10",
+            "description": "Dealer-scoped. Paginated, newest first: the work the calling dealer has assigned to one agent. Each row: service, the agent's own status (agentStatus), the live ledger cost, and the source process (vehicle, lifecycle status, dealNumber, trackingNumber, hasReceipt, tags). Optional ?search= (registration number / make / model / service) and ?agentStatusId=<uuid|none>. 4044 when the dealer has never granted that agent."
+          }
+        },
+        {
+          "name": "Get Assignment Summary By Agent (dealer)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/process-assignments/by-agent/{{agentId}}/summary",
+            "description": "Dealer-scoped. Totals for ALL the work the calling dealer has assigned to one agent: { agent, grantStatus, totals: { assignments, processes, costedAssignments, totalCost }, byStatus: [{ statusId|null, statusName, colour, count }] }. 4044 when the dealer has never granted that agent."
+          }
+        },
+        {
           "name": "List Agent Assignments",
           "request": {
             "method": "GET",
@@ -3816,7 +4031,7 @@
               "raw": "{\n  \"counterpartyId\": \"{{counterpartyId}}\",\n  \"direction\": \"CREDIT\",\n  \"amount\": 4500,\n  \"description\": \"RTO charges for MH12AB1234\",\n  \"assignmentId\": \"{{assignmentId}}\"\n}"
             },
             "url": "{{baseUrl}}/api/v1/khata/entries",
-            "description": "Post a credit/debit entry to the pair (caller + counterparty). Sign convention (dealer-perspective): CREDIT raises what the dealer owes the agent (+amount), DEBIT lowers it. direction is CREDIT|DEBIT; amount > 0, <= 2 decimal places. description and assignmentId optional. Requires an ACTIVE dealer<->agent grant (else 4054); an agent's placeholder dealer must be connected first (else 4057). Captures ledgerEntryId from the response."
+            "description": "Post a credit/debit entry to the pair (caller + counterparty). Sign convention (dealer-perspective): CREDIT raises what the dealer owes the agent (+amount), DEBIT lowers it. direction is CREDIT|DEBIT; amount > 0, <= 2 decimal places. description and assignmentId optional. Requires an ACTIVE dealer<->agent grant (else 4054); an agent's placeholder dealer must be connected first (else 4057). Captures ledgerEntryId from the response. An optional assignmentId must belong to this same dealer↔agent pair (4236 otherwise)."
           }
         },
         {

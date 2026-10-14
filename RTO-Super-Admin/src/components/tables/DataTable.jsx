@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useReducer } from 'react'
 import { ArrowUpDown, Download } from 'lucide-react'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Button } from '@/components/ui/button'
@@ -34,9 +34,17 @@ import { downloadCSV } from '@/lib/utils'
  * @param {Function} [props.bulkActions]
  * @param {(row: object) => string|number} [props.getRowId]
  */
+// One shared empty list: an omitted `data` must keep the same identity on every render.
+const NO_ROWS = []
+
+// `clientPage` and `selected` are also reset during render (below), so they use useReducer, not useState:
+// useState checks an event's update against the last render even when that render was thrown away
+// (a pending transition), which drops or miscomputes the update. useReducer has no such shortcut.
+const replaceState = (prev, next) => (typeof next === 'function' ? next(prev) : next)
+
 export function DataTable({
   columns,
-  data = [],
+  data = NO_ROWS,
   mode = 'client',
   pageSize = PAGE_SIZE.client,
   page: serverPage = 1,
@@ -55,10 +63,10 @@ export function DataTable({
   bulkActions,
   getRowId = (row) => row.id,
 }) {
-  const [clientPage, setClientPage] = useState(1)
+  const [clientPage, setClientPage] = useReducer(replaceState, 1)
   const [sortKey, setSortKey] = useState(null)
   const [sortDir, setSortDir] = useState('asc')
-  const [selected, setSelected] = useState([])
+  const [selected, setSelected] = useReducer(replaceState, [])
 
   const isServer = mode === 'server'
   const page = isServer ? serverPage : clientPage
@@ -82,13 +90,23 @@ export function DataTable({
     ? sortedData
     : sortedData.slice((clientPage - 1) * pageSize, clientPage * pageSize)
 
-  useEffect(() => {
-    if (!isServer) setClientPage(1)
-  }, [data.length, sortKey, sortDir, isServer])
+  // Both resets below compare with the previous render and update during render (not in an effect),
+  // so the table never paints a stale page or a stale selection.
 
-  useEffect(() => {
-    setSelected([])
-  }, [page, data])
+  // Client mode goes back to page 1 when the row count or the sort changes.
+  const pageResetKey = `${isServer}|${data.length}|${sortKey}|${sortDir}`
+  const [prevPageResetKey, setPrevPageResetKey] = useState(pageResetKey)
+  if (prevPageResetKey !== pageResetKey) {
+    setPrevPageResetKey(pageResetKey)
+    if (!isServer) setClientPage(1)
+  }
+
+  // The selection belongs to one page of one data set: clear it when either changes.
+  const [selectionScope, setSelectionScope] = useState({ page, data })
+  if (!Object.is(selectionScope.page, page) || selectionScope.data !== data) {
+    setSelectionScope({ page, data })
+    if (selected.length) setSelected([])
+  }
 
   const handleSort = (key) => {
     if (isServer || !key) return

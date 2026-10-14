@@ -64,6 +64,59 @@ export class LocalStorageProvider implements StorageProvider {
   }
 
   /** @inheritdoc */
+  async readFile(key: string): Promise<Buffer> {
+    const resolvedRoot = path.resolve(this.uploadRoot);
+    const absolute = path.resolve(this.uploadRoot, key);
+    if (
+      key.includes('..') ||
+      (absolute !== resolvedRoot && !absolute.startsWith(resolvedRoot + path.sep))
+    ) {
+      throw new Error('Invalid file path');
+    }
+    return fs.readFile(absolute);
+  }
+
+  /** @inheritdoc */
+  async deleteFile(key: string): Promise<void> {
+    const resolvedRoot = path.resolve(this.uploadRoot);
+    const absolute = path.resolve(this.uploadRoot, key);
+    if (
+      key.includes('..') ||
+      (absolute !== resolvedRoot && !absolute.startsWith(resolvedRoot + path.sep))
+    ) {
+      throw new Error('Invalid file path');
+    }
+    try {
+      await fs.unlink(absolute);
+    } catch (err: unknown) {
+      // A missing file is a no-op success — the bytes are already gone.
+      if (
+        typeof err === 'object' &&
+        err !== null &&
+        'code' in err &&
+        (err as { code?: string }).code === 'ENOENT'
+      ) {
+        return;
+      }
+      throw err;
+    }
+  }
+
+  /** @inheritdoc */
+  async deleteFolder(prefix: string): Promise<void> {
+    const resolvedRoot = path.resolve(this.uploadRoot);
+    const absolute = path.resolve(this.uploadRoot, prefix);
+    if (
+      prefix.includes('..') ||
+      (absolute !== resolvedRoot && !absolute.startsWith(resolvedRoot + path.sep))
+    ) {
+      throw new Error('Invalid file path');
+    }
+    // `force: true` makes a missing folder a no-op success; `recursive: true` removes its contents.
+    await fs.rm(absolute, { recursive: true, force: true });
+  }
+
+  /** @inheritdoc */
   async moveFile(sourceKey: string, destKey: string): Promise<void> {
     const resolvedRoot = path.resolve(this.uploadRoot);
     const source = path.resolve(this.uploadRoot, sourceKey);
@@ -75,5 +128,40 @@ export class LocalStorageProvider implements StorageProvider {
     }
     await fs.mkdir(path.dirname(dest), { recursive: true });
     await fs.rename(source, dest);
+  }
+
+  /** @inheritdoc */
+  async listRootFiles(): Promise<Array<{ key: string; lastModified: Date }>> {
+    let entries;
+    try {
+      entries = await fs.readdir(this.uploadRoot, { withFileTypes: true });
+    } catch (err: unknown) {
+      // The upload root may not have been created yet (no upload has happened) — treat as empty.
+      if (
+        typeof err === 'object' &&
+        err !== null &&
+        'code' in err &&
+        (err as { code?: string }).code === 'ENOENT'
+      ) {
+        return [];
+      }
+      throw err;
+    }
+    const files: Array<{ key: string; lastModified: Date }> = [];
+    for (const entry of entries) {
+      // Only bare top-level files (skip subfolders and dotfiles).
+      if (!entry.isFile() || entry.name.startsWith('.')) {
+        continue;
+      }
+      try {
+        const stat = await fs.stat(path.join(this.uploadRoot, entry.name));
+        files.push({ key: entry.name, lastModified: stat.mtime });
+      } catch {
+        // The file vanished between readdir and stat (e.g. a concurrent attach moved it out of the
+        // root). Skip just this entry rather than aborting the whole listing.
+        continue;
+      }
+    }
+    return files;
   }
 }

@@ -10,6 +10,8 @@ import {
   listAgentAssignmentsHandler,
   getAssignmentDetailsHandler,
   updateAgentStatusHandler,
+  listDealerAgentAssignmentsHandler,
+  getDealerAgentAssignmentSummaryHandler,
 } from '../controllers/process-assignment.controller';
 import {
   createAssignmentSchema,
@@ -18,6 +20,8 @@ import {
   updateAssignmentCostSchema,
   agentAssignmentsQuerySchema,
   updateAgentStatusSchema,
+  dealerAgentAssignmentsSchema,
+  dealerAgentAssignmentSummarySchema,
 } from '../validations/process-assignment.validation';
 
 const router = Router();
@@ -34,6 +38,20 @@ router.get(
   '/agent',
   validate(agentAssignmentsQuerySchema),
   asyncHandler(listAgentAssignmentsHandler),
+);
+
+// Dealer-scoped: the work the caller's dealer has assigned to ONE agent (totals, then the list).
+// Literal `/by-agent` routes precede the `/:id`-style routes so they are never shadowed.
+router.get(
+  '/by-agent/:agentId/summary',
+  validate(dealerAgentAssignmentSummarySchema),
+  asyncHandler(getDealerAgentAssignmentSummaryHandler),
+);
+
+router.get(
+  '/by-agent/:agentId',
+  validate(dealerAgentAssignmentsSchema),
+  asyncHandler(listDealerAgentAssignmentsHandler),
 );
 
 router.get(

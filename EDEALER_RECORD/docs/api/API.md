@@ -194,7 +194,7 @@ Authenticate with email and password. Returns JWT and user info.
 
 `token` is the short-lived **access token** (`JWT_ACCESS_EXPIRES_IN`, default `1h`); `refreshToken` is the long-lived **refresh token** (`JWT_REFRESH_EXPIRES_IN`, default `30d`). Store both; when the access token expires, exchange the refresh token at **`POST /auth/refresh`** rather than forcing a re-login. Passkey login and signup OTP-verification return the same `token` + `refreshToken` pair.
 
-**Error codes:** `4010` — invalid email or password; `4031` — email not verified (only when `REQUIRE_EMAIL_VERIFIED_FOR_LOGIN=true`).
+**Error codes:** `4010` — invalid email or password; `4031` — email not verified (only when `REQUIRE_EMAIL_VERIFIED_FOR_LOGIN=true`); `4022` (**403**) — the user's dealer/agent firm is **paused** by the super-admin (`isActive: false`), message `Your account access has been paused. Please contact the super admin.` — no token is issued (see **Paused firms** under [Using the JWT](#using-the-jwt)).
 
 ---
 
@@ -212,7 +212,7 @@ Exchange a valid **refresh token** for a fresh access token and a **rotated** re
 
 **Response (200):** `data` = `{ "token": "<new access token>", "refreshToken": "<rotated refresh token>" }`. The client should replace both stored tokens.
 
-**Error codes:** `4017` — invalid or expired refresh token (bad signature, expired, wrong `purpose`, or unknown user). Note an **access** token is rejected here (wrong `purpose`), and a **refresh** token is rejected by `authenticate` on normal API routes (**`4015`**).
+**Error codes:** `4017` — invalid or expired refresh token (bad signature, expired, wrong `purpose`, or unknown user). Note an **access** token is rejected here (wrong `purpose`), and a **refresh** token is rejected by `authenticate` on normal API routes (**`4015`**). `4022` (**403**) — the refresh token is valid but the user's dealer/agent firm is **paused**; no new tokens are issued, so the client must sign the user out instead of retrying.
 
 ---
 
@@ -258,7 +258,7 @@ Verify a **6-digit OTP** for signup email verification or for the password-reset
 }
 ```
 
-**Error codes:** `4006` — invalid or expired signup OTP; `4007` — invalid or expired password-reset OTP; `4004` — user missing after verification (rare).
+**Error codes:** `4006` — invalid or expired signup OTP; `4007` — invalid or expired password-reset OTP; `4004` — user missing after verification (rare); `4022` (**403**, signup purpose only) — the user's dealer/agent firm is **paused**, so no access token is issued.
 
 ---
 
@@ -446,7 +446,7 @@ Verify the WebAuthn authentication response and return JWT and user. Call after 
 }
 ```
 
-**Error codes:** `4005` — invalid/expired challenge; `4011` — passkey not found; `4012` — verification failed; `5001` — user not found after verification.
+**Error codes:** `4005` — invalid/expired challenge; `4011` — passkey not found; `4012` — verification failed; `5001` — user not found after verification; `4022` (**403**) — the user's dealer/agent firm is **paused** by the super-admin (same as password login; no token is issued).
 
 ---
 
@@ -461,6 +461,13 @@ Authorization: Bearer <token>
 Token payload includes `sub` (userId), `email`, `role`, **`dealerId`** (UUID or `null` — the dealer linked in `dealer_wise_user`, if any), **`agentId`** (UUID or `null` — the agent linked in `agent_wise_user`; a user is linked to at most one of dealer/agent), **`isSuperAdmin`** (boolean — from `User.isSuperAdmin`; the only privilege signal since `role` is always `USER`), and **`purpose`** (`ACCESS`). Password-reset tokens omit these. After a user’s dealer/agent assignment or admin flag changes, they must sign in again (or refresh) so the access token picks up the new claims.
 
 **Access + refresh tokens.** Login/verify-otp/passkey return an **access token** (`purpose: ACCESS`, `JWT_ACCESS_EXPIRES_IN`, default `1h`) and a **refresh token** (`purpose: REFRESH`, `JWT_REFRESH_EXPIRES_IN`, default `30d`). Send the access token as `Authorization: Bearer`; on a `401`, exchange the refresh token at **`POST /auth/refresh`** for a new access token + rotated refresh token, then retry — the user stays logged in. `authenticate` accepts only `ACCESS` tokens (a `REFRESH` or `PASSWORD_RESET` token is rejected with **`4015`**); `/auth/refresh` accepts only `REFRESH` tokens (**`4017`** otherwise).
+
+**Paused firms (`403` / `4022`).** A super-admin can pause a dealer or agent firm (`isActive: false`, see `PATCH /dealers/:id/access` and `PATCH /agents/:id/access`). While paused:
+
+- **Sign-in is refused** — `POST /auth/login`, `POST /auth/refresh`, `POST /auth/passkey/login/verify` and signup `POST /auth/verify-otp` return **403 `4022`** for every login user of that firm.
+- **Live sessions are rejected** — `authenticate` returns **403 `4022`** on **every** route it guards, **including `GET /auth/me`** (unlike the `4021` approval gate there is no `/auth` exemption). This is a live lookup of the firm linked to the token's `dealerId` / `agentId` claim (cached in-process for ~5 seconds), not a JWT claim, so the pause applies on the user's next request rather than after the access token expires.
+
+The error body is the normal envelope: `{ "success": false, "statusCode": 403, "code": 4022, "message": "Your account access has been paused. Please contact the super admin." }`. It is a **403, not a 401** — clients must not try to refresh; they clear the stored session and show the message. Super-admin tokens and users with no firm link are never blocked. A pause does **not** cascade across firms (an agent holding a grant on a paused dealer keeps working). Resuming restores access — users simply sign in again.
 
 ### Dealer-scoped requests
 
@@ -1075,7 +1082,7 @@ Assigns a role to an employee, or clears it (`roleId: null` → read-only defaul
 
 ## Dealers
 
-CRUD for dealers. All fields are required. `emailId`, `mobileNo`, and `whatsappNo` are unique. `isSubscribe` defaults to `false` on create.
+CRUD for dealers. All fields are required. `emailId`, `mobileNo`, and `whatsappNo` are unique. `isSubscribe` defaults to `false` on create. `isActive` (the super-admin access switch) defaults to `true` and is **not** accepted by create/update — it changes only through `PATCH /dealers/:id/access`.
 
 **Auth:** All dealer endpoints require a valid JWT. Send it in the header: `Authorization: Bearer <token>`.
 
@@ -1094,6 +1101,7 @@ From Prisma `Dealer` model:
 - `emailId` (required, **unique**)
 - `displayName`, `whatsappNo` (required, **whatsappNo unique**)
 - `isSubscribe` (boolean, required, default `false`)
+- `isActive` (boolean, default `true`) — super-admin access switch; `false` = **paused** (the dealer's login users cannot sign in and live sessions get `403` / `4022`). Returned on every dealer row; read-only except via `PATCH /dealers/:id/access`.
 - `createdAt` / `updatedAt` (timestamps, managed by DB)
 
 ---
@@ -1200,6 +1208,30 @@ Update an existing dealer. All body fields required (including `isSubscribe`).
 ```
 
 **Response (200):** `data` is `{ id, isSubscribe }`. **Error codes:** `4038` — not a super-admin; `4043` — dealer not found.
+
+---
+
+### PATCH /api/v1/dealers/:id/access
+
+**Super-admin only.** Pause or resume a dealer's access (`isActive`). `false` = **paused**: none of the dealer's login users can sign in, and every user already signed in is rejected with **403 `4022`** on their next request (see **Paused firms** under [Using the JWT](#using-the-jwt)). `true` = resumed (users sign in again). Separate from `isSubscribe` (capability) and `approvalStatus` (registration approval) — neither is touched. Does not cascade to agents holding a grant on this dealer; inert for placeholder dealers (no login).
+
+**Auth:** Bearer token required; super-admin (`4038` otherwise). **Path params:** `id` = `dealerId`. **Request body:** `isActive` (boolean, required).
+
+```json
+{ "isActive": false }
+```
+
+**Response (200):**
+
+```json
+{
+  "statusCode": 200,
+  "message": "Dealer access updated",
+  "data": { "id": "uuid", "isActive": false }
+}
+```
+
+**Error codes:** `4038` — not a super-admin; `4043` — dealer not found; `4220` — invalid `id` / missing or non-boolean `isActive`.
 
 ---
 
@@ -1703,7 +1735,7 @@ Per-vehicle **buy/sell history** for the caller's own dealership, plus an anonym
 
 **Response (200):** `data` =
 - `vehicle` — non-sensitive spec header: `vehicleId`, `registrationNumber`, `make`, `model`, `chassisNumber`, `engineNumber`, `manufactureYear`.
-- `events[]` — the caller's **OWN** timeline (full detail), ordered by process date ascending (nulls last), then `BUY` before `SELL`. Each: `{ kind: 'BUY' | 'SELL', date, counterpartyName, counterpartyMobile, counterpartyAddress, amount, currency, processId }`. A **BUY** is emitted when the process has a SELLER (amount = `purchasePrice`, or `null` = "not recorded"); a **SELL** when it has a BUYER (amount = `salePrice`, or `null`). Two events can share a `processId` (a process with both a seller and buyer).
+- `events[]` — the caller's **OWN** timeline (full detail), ordered by process date ascending (nulls last), then `BUY` before `SELL`. Each: `{ kind: 'BUY' | 'SELL', date, counterpartyName, counterpartyMobile, counterpartyAddress, amount, currency, processId, referenceName }`. A **BUY** is emitted when the process has a SELLER (amount = `purchasePrice`, or `null` = "not recorded"); a **SELL** when it has a BUYER (amount = `salePrice`, or `null`). Two events can share a `processId` (a process with both a seller and buyer). `referenceName` is the referrer for that side of the deal — a **BUY** carries the process's `SELL`-type reference, a **SELL** carries its `BUY`-type reference — and is `null` for a direct deal (shown as "Self" in the UI).
 - `summary` — own data only: `{ processCount, grossMarginTotal, expenseTotal, netProfitTotal, currency }`. `grossMarginTotal` sums `salePrice − purchasePrice` over processes where **both** prices exist (Decimal math, no float drift), else `null`. `expenseTotal` sums all of the caller's `ProcessExpense` amounts for the vehicle (always a number, `0` if none). `netProfitTotal` = `grossMarginTotal − expenseTotal`, or `null` when there is no gross margin.
 - `market` — **anonymized, across all dealers**: `{ changedHands, dealersInvolved }`. Coarse, non-attributable counts **only** — no price, no customer PII, no dealer identity, and **no transaction dates** (a cross-dealer year range was intentionally omitted, since `min/max processDate` over all dealers would leak a competitor's transaction timing to a caller who handled the vehicle).
 
@@ -1716,8 +1748,8 @@ Per-vehicle **buy/sell history** for the caller's own dealership, plus an anonym
   "data": {
     "vehicle": { "vehicleId": "…", "registrationNumber": "GJ03BR9195", "make": "Maruti", "model": "Swift", "chassisNumber": null, "engineNumber": null, "manufactureYear": 2019 },
     "events": [
-      { "kind": "BUY",  "date": "2026-06-28T15:07:00.413Z", "counterpartyName": "Old Owner", "counterpartyMobile": "9111111111", "counterpartyAddress": null, "amount": 50000, "currency": "INR", "processId": "…" },
-      { "kind": "SELL", "date": "2026-06-28T15:07:00.413Z", "counterpartyName": "New Buyer", "counterpartyMobile": "9222222222", "counterpartyAddress": null, "amount": 65000, "currency": "INR", "processId": "…" }
+      { "kind": "BUY",  "date": "2026-06-28T15:07:00.413Z", "counterpartyName": "Old Owner", "counterpartyMobile": "9111111111", "counterpartyAddress": null, "amount": 50000, "currency": "INR", "processId": "…", "referenceName": "Ramesh Broker" },
+      { "kind": "SELL", "date": "2026-06-28T15:07:00.413Z", "counterpartyName": "New Buyer", "counterpartyMobile": "9222222222", "counterpartyAddress": null, "amount": 65000, "currency": "INR", "processId": "…", "referenceName": null }
     ],
     "summary": { "processCount": 2, "grossMarginTotal": 15000, "expenseTotal": 5000.5, "netProfitTotal": 9999.5, "currency": "INR" },
     "market": { "changedHands": 2, "dealersInvolved": 1 }
@@ -1953,11 +1985,13 @@ Starts a workflow: **upserts** a **Vehicle** by `registrationNumber`, then creat
 - **Prices** (optional): `purchasePrice` (what the dealer paid the SELLER) and `salePrice` (what the BUYER paid) — non-negative, ≤2 decimals, stored `Decimal(14,2)`; plus `priceCurrency` (default `INR`). Prices are **independent** of the persons — either may be recorded whether or not a seller/buyer person is present. They live on the dealer-scoped process (private per dealer) and feed **`GET /vehicles/history`**.
 - **`uploadPhotos`** (optional): omit or `[]` to skip. Each item: `{ category, imageName }` (same fields as **`POST /api/v1/process-upload-photos`**, without `processId` — assigned automatically).
 - **`processReferences`** (optional): omit or `[]` to skip. Each item: `{ referenceId, referenceType }` where `referenceType` is `BUY` (buyer reference) or `SELL` (seller reference). `referenceId` must exist in **`dealer_references`** and belong to the dealer when scoped. At most one row per `referenceType` per request.
+- **`status`** (optional): the process's initial fixed lifecycle status — one of `SOLD` / `COMPLETE` / `SCRAP`, or omit/`null` for **OPEN** (default). When a terminal status is chosen at creation, the "at most one open process per vehicle per dealer" invariant does **not** apply, so `4113` is never raised for a non-OPEN create.
+- **`dealNumber`** (optional): a human-facing deal/reference number (free-text, trimmed, ≤100 chars). Omit, `null`, or blank to leave it unset.
 - `processDate` defaults to **now** if omitted; otherwise send an ISO-8601 string.
 
 **Auth:** Bearer token required.
 
-**Request body:** Same fields as **`POST /api/v1/vehicles`** (`registrationNumber` required; other vehicle fields optional/nullable), plus optional `processDate` (ISO string), plus optional **`dealerId`** (required for **`ADMIN`**), plus optional **`persons`**, **`uploadPhotos`**, **`processReferences`** (arrays, may be empty).
+**Request body:** Same fields as **`POST /api/v1/vehicles`** (`registrationNumber` required; other vehicle fields optional/nullable), plus optional `processDate` (ISO string), plus optional **`dealerId`** (required for **`ADMIN`**), plus optional **`persons`**, **`uploadPhotos`**, **`processReferences`** (arrays, may be empty), plus optional **`status`** (`SOLD` | `COMPLETE` | `SCRAP` | `null`, default `null` = OPEN) and **`dealNumber`** (string, ≤100).
 
 **Example:**
 
@@ -1968,6 +2002,8 @@ Starts a workflow: **upserts** a **Vehicle** by `registrationNumber`, then creat
   "make": "Maruti",
   "model": "Swift",
   "processDate": "2026-04-05T12:00:00.000Z",
+  "status": "SOLD",
+  "dealNumber": "DEAL-2026-0042",
   "persons": [
     {
       "personName": "John Seller",
@@ -1991,9 +2027,9 @@ Starts a workflow: **upserts** a **Vehicle** by `registrationNumber`, then creat
 }
 ```
 
-**Response (201):** `data` = `{ vehicle, process, vehicleCreated, vehicleUpdated, uploadPhotos, processReferences }` where `process` includes `persons`, `processUploadPhotos`, and `processReferences`; top-level `uploadPhotos` / `processReferences` mirror the nested arrays for convenience. The new process is created **OPEN** (`status: null`).
+**Response (201):** `data` = `{ vehicle, process, vehicleCreated, vehicleUpdated, uploadPhotos, processReferences }` where `process` includes `persons`, `processUploadPhotos`, and `processReferences` (and carries the `status` and `dealNumber` set on it); top-level `uploadPhotos` / `processReferences` mirror the nested arrays for convenience. The new process is created with the **chosen status** (default **OPEN**, `status: null`) and the optional `dealNumber`.
 
-**Error codes:** `4043` — dealer not found; `4057` — dealer reference not found; `4035` — reference not in dealer scope; `4100`–`4102` — vehicle uniqueness conflicts on create/update; `4032`–`4033`, `4226` — dealer scope; `4227` — invalid `processDate`; `4228` — duplicate `referenceType` in `processReferences`; **`4113`** — an **OPEN** (status-less) process already exists for this vehicle under this dealer (set its status first — at most one open process per vehicle per dealer).
+**Error codes:** `4043` — dealer not found; `4057` — dealer reference not found; `4035` — reference not in dealer scope; `4100`–`4102` — vehicle uniqueness conflicts on create/update; `4032`–`4033`, `4226` — dealer scope; `4227` — invalid `processDate`; `4228` — duplicate `referenceType` in `processReferences`; **`4113`** — an **OPEN** (status-less) process already exists for this vehicle under this dealer (set its status first — at most one open process per vehicle per dealer). This fires **only for an OPEN create** (`status` omitted/`null`); a `SOLD`/`COMPLETE`/`SCRAP` create is never blocked by an existing open process. **`4114`** — a `SOLD` create must include a buyer (a `persons` entry with `personType: "BUYER"`). When created `SOLD`, `soldDate` is stamped to the chosen `processDate`.
 
 ---
 
@@ -2034,11 +2070,11 @@ Create a vehicle process and its persons in **one request**.
 
 ### GET /api/v1/vehicle-processes
 
-List vehicle processes (paginated). Each item includes `persons[]`, `vehicle`, `tags[]` (`[{ tagId, tagName, colour }]`, ordered by `tagName`), and the process **`status`** (`"SOLD"` | `"COMPLETE"` | `"SCRAP"` | `null`, where `null` = OPEN).
+List vehicle processes (paginated). Each item includes `persons[]`, `vehicle`, `tags[]` (`[{ tagId, tagName, colour }]`, ordered by `tagName`), the process **`status`** (`"SOLD"` | `"COMPLETE"` | `"SCRAP"` | `null`, where `null` = OPEN), and **`starredPhotoUrl`** — the resolved public URL of the process's starred (primary/profile) vehicle photo, or `null` when none. **Soft-deleted (binned) processes are excluded** — see `GET /vehicle-processes/bin`.
 
 **Auth:** Bearer token required.
 
-**Query params:** `page`, `limit` (optional). Optional **`search`** — free-text filter over the vehicle's registration number (matched space/punctuation-insensitively, since numbers are stored normalized) and any linked person's name (case-insensitive). Optional **`tagId`** (uuid) — narrows the list to processes carrying that tag (server-side, so pagination totals stay correct). Optional **`status`** — one of `SOLD` | `COMPLETE` | `SCRAP` | `OPEN`; `OPEN` matches status-less (open) processes, a terminal value matches that status exactly. `search`, `tagId`, and `status` are AND-ed. Agents pass `dealerId` (a dealer they manage) to scope the list.
+**Query params:** `page`, `limit` (optional). Optional **`search`** — free-text filter over the vehicle's registration number (matched space/punctuation-insensitively, since numbers are stored normalized) and any linked person's name (case-insensitive). Optional **`tagId`** (uuid) — narrows the list to processes carrying that tag (server-side, so pagination totals stay correct). Optional **`status`** — one of `SOLD` | `COMPLETE` | `SCRAP` | `OPEN`; `OPEN` matches status-less (open) processes, a terminal value matches that status exactly. Optional **`dateFrom`** / **`dateTo`** (ISO 8601 datetimes) — inclusive `processDate` range (used by the dashboard date-range picker); either bound may be given alone. `search`, `tagId`, `status`, and the date range are AND-ed. Agents pass `dealerId` (a dealer they manage) to scope the list.
 
 ---
 
@@ -2064,6 +2100,37 @@ The **caller agent's own** (agent-created) processes for the agent board — eve
 
 - **`agentStatus`** is `null` until a status is set; new agent-created processes default to the agent's lowest-ranked status.
 - **`tags`** — the process's `DealerTag`s via the `ProcessTag` join, `[{ tagId, tagName, colour }]` ordered by `tagName` (`[]` when none).
+
+---
+
+### GET /api/v1/vehicle-processes/export
+
+Export the caller's vehicle processes over a `processDate` range as an **Excel workbook** or **PDF**, including only the selected sections. **Streams a binary file** (an `attachment` with `Content-Disposition`) — this endpoint does **not** use the JSON `sendSuccess` envelope. Scope is resolved exactly like `GET /vehicle-processes`: a **dealer** exports their own processes; an **agent** passes `dealerId` (a dealer they manage); a **super-admin** passes `dealerId` (required) or omits it for all.
+
+**Auth:** Bearer token required.
+
+**Query params:**
+
+| Param | Type | Notes |
+|-------|------|-------|
+| `format` | `"excel"` \| `"pdf"` | **Required.** |
+| `dateFrom` | ISO datetime | Inclusive lower bound on the date field. Optional. |
+| `dateTo` | ISO datetime | Inclusive upper bound on the date field. Optional. |
+| `dateField` | `"processDate"` \| `"soldDate"` | Which date column the range filters on (default `processDate`). `soldDate` naturally excludes never-sold processes. |
+| `statuses` | string | Comma-separated lifecycle statuses to include: `OPEN,SOLD,COMPLETE,SCRAP` (`OPEN` = status-less). Unknown tokens ignored; **empty/absent or all four = every status**. Multi-select is OR-ed. |
+| `sections` | string | Comma-separated subset of `vehicle,persons,deal,amount,documents,vehicleImages`. Unknown tokens are ignored; **empty/absent = all sections**. |
+| `dealerId` | uuid | Managed-dealer passthrough (agent/super-admin); ignored for a dealer caller. |
+
+- **Default range:** when **both** `dateFrom` and `dateTo` are omitted, the **current month** is exported.
+- **Firm letterhead:** the caller dealer's firm name, address (`Address, City, State - Pincode`) and mobile appear at the TOP of both the PDF and each Excel sheet; the PDF additionally repeats `firm · mobile` (left) + `Page N` (right) in the footer of every page (Excel carries the same as a print footer). All firm fields are blank for a super-admin all-dealers export.
+- **Sections → content:** `vehicle` (reg no, make/model, mfg, reg date, chassis, engine, type); `persons` (active seller & buyer name + mobile); `deal` (deal number, status, process/sold dates, seller/buyer references); `amount` (purchase, sale, Σ expenses, computed profit); `documents` (DOCUMENT-kind images, embedded); `vehicleImages` (VEHICLE-kind photos, embedded). A leading **Reg No** column is always present.
+- **Excel:** a SINGLE `Vehicle Processes` sheet, **one row per process** — all selected scalar details as columns (incl. seller/buyer addresses), plus `Documents` / `Vehicle Photos` column groups with each image embedded in its own column (side by side) in that row. Firm letterhead on top, frozen header, zebra rows.
+- **PDF:** portrait A4. Firm letterhead on page 1, then one card per process: header (registration, make | model, status), the selected detail groups, and its documents and photos together. A process is kept in one piece — if it does not fit in what is left of a page it starts on a new page. Only a process taller than a whole page runs over; its overflow page is labelled `<registration> — continued`. Photo captions are a single line (cut with an ellipsis).
+- Stored images are WebP and are transcoded to JPEG (via `sharp`) for embedding; PDFs and unreadable files are skipped. At most **500** processes are exported; response headers `X-Export-Count` and `X-Export-Truncated` report the count and whether the range exceeded the cap.
+
+**Response (200):** the file bytes. Headers: `Content-Type` (`application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` or `application/pdf`), `Content-Disposition: attachment; filename="vehicle-processes_YYYYMMDD.{xlsx|pdf}"`, `Content-Length`, `X-Export-Count`, `X-Export-Truncated`.
+
+**Error codes:** `4220` — invalid query (e.g. missing/invalid `format`); `4032`/`4033`/`4039`/`4226` — dealer-scope resolution failures (same as the list endpoint).
 
 ---
 
@@ -2094,6 +2161,9 @@ Returns **vehicle**, **owner** (seller), **buyer**, **references**, and **photos
   "dealerId": "uuid",
   "agentStatusId": "uuid | null",
   "status": "SOLD | COMPLETE | SCRAP | null",
+  "dealNumber": "DEAL-2026-0042 | null",
+  "soldDate": "2026-10-04T12:00:00.000Z | null",
+  "buyerChangedAt": "2026-10-04T12:00:00.000Z | null",
   "trackingNumber": "IND123456789 | null",
   "receipt": {
     "imageName": "MH12AB1234_<processId>/<uuid>.pdf",
@@ -2147,7 +2217,20 @@ Returns **vehicle**, **owner** (seller), **buyer**, **references**, and **photos
       "processUploadImageId": null,
       "category": "RC Front",
       "imageName": "abc-uuid.png",
-      "photoUrl": "http://localhost:4002/uploads/abc-uuid.png"
+      "photoUrl": "http://localhost:4002/uploads/abc-uuid.png",
+      "kind": "DOCUMENT",
+      "isStarred": false
+    }
+  ],
+  "vehiclePhotos": [
+    {
+      "processUploadPhotoId": "uuid",
+      "processUploadImageId": null,
+      "category": "Vehicle Photo",
+      "imageName": "MH12AB1234_<processId>/veh-uuid.jpg",
+      "photoUrl": "http://localhost:4002/uploads/MH12AB1234_<processId>/veh-uuid.jpg",
+      "kind": "VEHICLE",
+      "isStarred": true
     }
   ],
   "tags": [
@@ -2157,10 +2240,15 @@ Returns **vehicle**, **owner** (seller), **buyer**, **references**, and **photos
 ```
 
 - **`status`** — the process's fixed lifecycle status: `SOLD` / `COMPLETE` / `SCRAP`, or `null` (OPEN, unset).
+- **`dealNumber`** — the optional human-facing deal/reference number captured at creation, or `null`.
+- **`soldDate`** — timestamp the process was first marked `SOLD` (preserved through a later `COMPLETE`), or `null` until sold.
+- **`buyerChangedAt`** — timestamp the active buyer was last replaced via change-buyer, or `null` if never changed.
+- **`createdAt`** — when the process row was created (used by the client to detect creation-time seller/buyer for the party-date display). The persons list (`GET /persons`) likewise now returns each person's `createdAt`.
 - **`owner`** — first `SELLER` person on the process, or `null`.
 - **`buyer`** — first `BUYER` person, or `null`.
 - **`references.seller` / `references.buyer`** — linked `dealer_references` by `referenceType` `SELL` / `BUY`, or `null`.
-- **`photos`** — rows from `process_upload_photo` and `process_upload_image`. `photoUrl` is built from stored file keys using the request host (same rules as upload `publicUrl`); full URLs stored in DB are returned unchanged.
+- **`photos`** — document photos: `DOCUMENT`-kind rows from `process_upload_photo` (cancelled-buyer IDs excluded) **plus** all legacy `process_upload_image` rows (always `kind: "DOCUMENT"`). `photoUrl` is built from stored file keys using the request host (same rules as upload `publicUrl`); full URLs stored in DB are returned unchanged. Fields are backward-compatible with older clients; `kind` is additive.
+- **`vehiclePhotos`** — `VEHICLE`-kind rows from `process_upload_photo` only, oldest first, capped at 5 per process (see `POST /process-upload-photos`). Same item shape as `photos`. Each carries **`isStarred`** — exactly one is `true` when the process has any vehicle photo (the primary/profile photo). Document rows in `photos` are always `isStarred: false`.
 - **`tags`** — the process's `DealerTag`s via the `ProcessTag` join, ordered by `tagName` (`[]` when none).
 
 **Error codes:** `4050` — vehicle process not found; `4034` — wrong dealer.
@@ -2239,7 +2327,7 @@ The agent sets (or clears) the **RC-book post/courier tracking number** after di
 
 ### PATCH /api/v1/vehicle-processes/:id/status
 
-Set or clear a process's **fixed lifecycle status** (`SOLD` / `COMPLETE` / `SCRAP`, or `null` = OPEN). The caller must manage the process's dealer (agent-aware scope). Setting a terminal value is always allowed. Sending `null` **reopens** the process and is rejected when **another** OPEN process already exists for the same vehicle under the same dealer (the "at most one open process per vehicle per dealer" invariant).
+Set or clear a process's **fixed lifecycle status** (`SOLD` / `COMPLETE` / `SCRAP`, or `null` = OPEN). The caller must manage the process's dealer (agent-aware scope). Setting a terminal value is always allowed **except `SOLD`, which requires an active `BUYER` person** on the process (else `4114`). The first time a process becomes `SOLD`, its **`soldDate`** is stamped (preserved through a later `COMPLETE`, but **cleared** when reopened to OPEN or set to `SCRAP`). Sending `null` **reopens** the process and is rejected when **another** OPEN process already exists for the same vehicle under the same dealer (the "at most one open process per vehicle per dealer" invariant).
 
 **Auth:** Bearer token required (dealer owner, managing agent, or super-admin — agent-aware scope).
 
@@ -2258,7 +2346,32 @@ Set or clear a process's **fixed lifecycle status** (`SOLD` / `COMPLETE` / `SCRA
 
 **Response (200):** the updated process (`persons[]` included), reflecting the new `status`.
 
-**Error codes:** `4050` — vehicle process not found; `4034` — wrong dealer; `4039` — agent does not manage this dealer; `4033` — account not linked to a dealer/agent; **`4113`** — cannot reopen: another OPEN process already exists for this vehicle under this dealer; `4220` — invalid body.
+**Error codes:** `4050` — vehicle process not found; `4034` — wrong dealer; `4039` — agent does not manage this dealer; `4033` — account not linked to a dealer/agent; **`4113`** — cannot reopen: another OPEN process already exists for this vehicle under this dealer; **`4114`** — cannot mark `SOLD`: the process has no active buyer (add one first); `4220` — invalid body.
+
+---
+
+### PATCH /api/v1/vehicle-processes/:id/sold-date
+
+Edit the recorded **sold date** of a process that has already been marked `SOLD`. The caller must manage the process's dealer (agent-aware scope).
+
+**Auth:** Bearer token required (dealer owner, managing agent, or super-admin — agent-aware scope).
+
+**Path:** `id` = `processId`.
+
+**Request body:**
+
+| Field    | Type           | Required | Validation                                                        |
+|----------|----------------|----------|-------------------------------------------------------------------|
+| dealerId | string         | No       | Optional for agents/super-admin; must match the process's dealer  |
+| soldDate | string (date)  | Yes      | ISO date or datetime string (coerced to a timestamp)              |
+
+```json
+{ "soldDate": "2026-10-01" }
+```
+
+**Response (200):** the updated process (`persons[]` included), reflecting the new `soldDate`.
+
+**Error codes:** `4050` — vehicle process not found; `4034` — wrong dealer; `4039` — agent does not manage this dealer; `4033` — account not linked to a dealer/agent; **`4115`** — the process has not been marked `SOLD` yet (nothing to edit); `4220` — invalid body.
 
 ---
 
@@ -2285,11 +2398,126 @@ Full-replace the process's tags (Finder-style labels). The caller must manage th
 
 ### DELETE /api/v1/vehicle-processes/:id
 
-Delete a vehicle process by ID (persons are deleted automatically via cascade).
+**Soft delete** — moves the vehicle process to the **recycle bin** (sets `deletedAt`) instead of removing it. The whole process is immediately hidden from every active read (lists, dashboard counts, per-vehicle history, agent board, task board/history, agent assignment lists, detail/`GET :id`), but **all its children (persons, documents, photos, tasks, expenses, tags, references, comments, assignments) stay in the DB and return intact on restore**. A binned process is **permanently purged (hard cascade delete) 7 days after deletion** — automatically (daily server sweep + a lazy purge whenever the bin is viewed); the purge also best-effort deletes each purged process's `uploads/{registration}_{processId}/` folder so no images are left orphaned on disk. A process already in the bin returns `4050`.
+
+**Auth:** Bearer token required (dealer owner, managing agent, or super-admin — agent-aware scope).
+
+**Response (200):** `{ "message": "Vehicle process moved to recycle bin", "data": {} }`.
+
+**Error codes:** `4050` — vehicle process not found (or already binned); `4034` — wrong dealer; `4039` — agent does not manage this dealer.
+
+---
+
+### GET /api/v1/vehicle-processes/bin
+
+List the **recycle bin** — soft-deleted (binned) processes for the caller's scope, paginated, newest deletion first. Viewing the bin first **lazily purges** any processes binned more than 7 days ago. Scope is resolved exactly like `GET /vehicle-processes`: a **dealer** sees their own bin; an **agent** passes `dealerId` (a dealer they manage); a **super-admin** sees all (or one dealer via `?dealerId`).
 
 **Auth:** Bearer token required.
 
-**Error codes:** `4050` — vehicle process not found; `4034`.
+**Query params:** `page`, `limit` (optional); `dealerId` (uuid, optional — agent/super-admin scope passthrough).
+
+**Response (200):** paginated; `data.data` is an array of:
+
+```json
+{
+  "processId": "uuid",
+  "registrationNumber": "MH12AB1234 | null",
+  "ownerName": "Ramesh Kumar | null",
+  "deletedAt": "2026-09-26T12:00:00.000Z",
+  "purgeAt": "2026-10-03T12:00:00.000Z",
+  "daysLeft": 7
+}
+```
+
+- **`ownerName`** — the process's ACTIVE seller (falls back to the first person), or `null`.
+- **`purgeAt`** = `deletedAt` + 7 days; **`daysLeft`** = whole days until purge, clamped at `0`.
+
+**Error codes:** `4039` — agent does not manage this dealer; `4226` — agent/super-admin missing `dealerId`; `4220` — invalid query.
+
+---
+
+### GET /api/v1/vehicle-processes/agent-bin
+
+The **caller agent's own recycle bin** — soft-deleted (binned) processes across **all** placeholder dealers the agent owns (`dealer.isPlaceholder && dealer.ownerAgentId === agent`), paginated, newest deletion first. The agent-global counterpart of `GET /vehicle-processes/bin` (mirrors `GET /vehicle-processes/agent-board`). Viewing first **lazily purges** any processes binned more than 7 days ago. **Non-agent callers receive an empty paginated result.**
+
+**Auth:** Bearer token required (agent).
+
+**Query params:** `page`, `limit` (optional).
+
+**Response (200):** paginated; `data.data` is an array of the **same item shape as `GET /vehicle-processes/bin`**:
+
+```json
+{
+  "processId": "uuid",
+  "registrationNumber": "MH12AB1234 | null",
+  "ownerName": "Ramesh Kumar | null",
+  "deletedAt": "2026-09-26T12:00:00.000Z",
+  "purgeAt": "2026-10-03T12:00:00.000Z",
+  "daysLeft": 7
+}
+```
+
+- **`ownerName`** — the process's ACTIVE seller (falls back to the first person), or `null`.
+- **`purgeAt`** = `deletedAt` + 7 days; **`daysLeft`** = whole days until purge, clamped at `0`.
+- Restore / permanent-delete a binned process via `POST /vehicle-processes/:id/restore` and `DELETE /vehicle-processes/:id/permanent` (they already work by `processId` for an agent's owned placeholder dealer).
+
+**Error codes:** `4220` — invalid query.
+
+---
+
+### POST /api/v1/vehicle-processes/:id/restore
+
+**Restore** a soft-deleted process from the recycle bin (clears `deletedAt`). Its untouched children reappear whole across every active read. No-op if the process is already active.
+
+**Auth:** Bearer token required (dealer owner, managing agent, or super-admin — agent-aware scope).
+
+**Path:** `id` = `processId`.
+
+**Response (200):** `data` = the restored process (with `persons[]`).
+
+**Error codes:** `4050` — vehicle process not found; `4034` — wrong dealer; `4039` — agent does not manage this dealer.
+
+---
+
+### DELETE /api/v1/vehicle-processes/:id/permanent
+
+**Permanently** hard-delete a process and cascade-delete **all** its children immediately — whether the process is active or already binned. Irreversible. After the DB delete, the process's whole per-process upload folder (`uploads/{registration}_{processId}/`) and every image under it are **best-effort recursively deleted** so nothing is left orphaned on disk (a missing/undeletable folder never fails the delete). The 7-day auto-purge does the same folder cleanup for each purged process.
+
+**Auth:** Bearer token required (dealer owner, managing agent, or super-admin — agent-aware scope).
+
+**Path:** `id` = `processId`.
+
+**Response (200):** `{ "message": "Vehicle process permanently deleted", "data": {} }`.
+
+**Error codes:** `4050` — vehicle process not found; `4034` — wrong dealer; `4039` — agent does not manage this dealer.
+
+---
+
+### POST /api/v1/vehicle-processes/bin/restore
+
+**Bulk-restore** soft-deleted processes from the recycle bin (multi-select). Two-pass for safety: every id is authorized first (fail-fast — if any is missing or not the caller's dealer, nothing is changed), then each is restored.
+
+**Auth:** Bearer token required (dealer owner, managing agent, or super-admin — agent-aware scope).
+
+**Body:** `{ "processIds": string[] }` — 1–100 process UUIDs.
+
+**Response (200):** `{ "message": "Vehicle processes restored", "data": { "count": 3 } }`.
+
+**Error codes:** `4220` — invalid body (empty / >100 / non-UUID); `4050` — a process not found; `4034` — wrong dealer; `4039` — agent does not manage this dealer.
+
+---
+
+### POST /api/v1/vehicle-processes/bin/permanent-delete
+
+**Bulk permanently** hard-delete processes (multi-select) — cascade-deletes all children and best-effort deletes each process's upload folder (as `DELETE :id/permanent` does). Two-pass for safety: every id is authorized first (fail-fast — if any is missing or unauthorized, nothing is deleted), then each is permanently deleted.
+
+**Auth:** Bearer token required (dealer owner, managing agent, or super-admin — agent-aware scope).
+
+**Body:** `{ "processIds": string[] }` — 1–100 process UUIDs.
+
+**Response (200):** `{ "message": "Vehicle processes permanently deleted", "data": { "count": 3 } }`.
+
+**Error codes:** `4220` — invalid body (empty / >100 / non-UUID); `4050` — a process not found; `4034` — wrong dealer; `4039` — agent does not manage this dealer.
 
 ---
 
@@ -2498,23 +2726,26 @@ Stores **category** and **image name** per vehicle process (no file URL in this 
 | `process_id` | `processId` |
 | `category` | `category` |
 | `image_name` | `imageName` |
+| `kind` | `kind` (`DOCUMENT` \| `VEHICLE`, default `DOCUMENT`) |
 | `created_at` / `updated_at` | `createdAt` / `updatedAt` |
 
-All columns are **required** (non-null).
+All columns are **required** (non-null). `kind` distinguishes document scans (`DOCUMENT`) from free-form "Vehicle Photos" (`VEHICLE`, capped at 5 per process).
 
 ---
 
 ### POST /api/v1/process-upload-photos
 
-**Body:** `processId`, `category`, `imageName` (strings, max 255). Optional **`dealerId`** for **`ADMIN`**.
+**Body:** `processId`, `category`, `imageName` (strings, max 255), and optional **`kind`** (`DOCUMENT` | `VEHICLE`, default `DOCUMENT`). Optional **`dealerId`** for **`ADMIN`**.
 
-**Error codes:** `4050`, `4034`, `4032`–`4033`, `4226`.
+The freshly-uploaded flat `imageName` key is **relocated into the process folder** `"{registrationNumber}_{processId}/<uuid>.<ext>"` and the stored key is that folder-scoped value. When **`kind: "VEHICLE"`**, the process may hold **at most 5** vehicle photos — creating a 6th returns **409 `4114`**. The **first** vehicle photo on a process is **auto-starred** (becomes the primary/profile photo, `isStarred: true`); a process holds **at most one** starred vehicle photo.
+
+**Error codes:** `4050`, `4034`, `4032`–`4033`, `4226`; `4114` — vehicle photo cap (max 5) reached.
 
 ---
 
 ### POST /api/v1/process-upload-photos/bulk
 
-**Body:** `items` — non-empty array of `{ processId, category, imageName }`. Each `processId` is checked against the same dealer scope. Optional **`dealerId`** for **`ADMIN`**.
+**Body:** `items` — non-empty array of `{ processId, category, imageName }`. Each `processId` is checked against the same dealer scope. Optional **`dealerId`** for **`ADMIN`**. Bulk items are always `kind: "DOCUMENT"` (use the single create for vehicle photos).
 
 **Response (201):** `data` = `{ items: [ ...created rows ] }`.
 
@@ -2526,7 +2757,7 @@ All columns are **required** (non-null).
 
 **Query:** `processId` (required). Optional **`dealerId`** for **`ADMIN`**.
 
-**Response:** `data` is an array ordered by `createdAt` ascending.
+**Response:** `data` is an array (each row includes `kind` and `isStarred`) ordered by `createdAt` ascending.
 
 ---
 
@@ -2542,13 +2773,27 @@ All columns are **required** (non-null).
 
 **Body:** `category`, `imageName` (both required). Optional **`dealerId`** query for **`ADMIN`**.
 
+Replaces the photo. When `imageName` is a **new** flat upload key (different from the stored one), the new file is relocated into the process folder and, after the row is updated, the **old file's bytes are removed** (best-effort). When `imageName` equals the stored key, this is a **category-only** update. **`kind` is immutable** and cannot be changed here.
+
 **Error codes:** `4056`, `4034`, `4032`–`4033`, `4226`.
+
+---
+
+### PATCH /api/v1/process-upload-photos/:id/star
+
+**Path:** `id` = `processUploadPhotoId`. No body. Optional **`dealerId`** query for **`ADMIN`**.
+
+Marks a **`VEHICLE`-kind** photo as the process's **starred** (primary/profile) photo. Atomically clears the star on every other vehicle photo of the same process, so a process always holds **at most one** starred photo. Only vehicle photos can be starred — starring a `DOCUMENT` row returns **409 `4115`**.
+
+**Response:** `data` = the updated photo row (`isStarred: true`).
+
+**Error codes:** `4056` — not found; `4115` — only vehicle photos can be starred; `4034`, `4032`–`4033`, `4226`.
 
 ---
 
 ### DELETE /api/v1/process-upload-photos/:id
 
-Optional **`dealerId`** query for **`ADMIN`**.
+Deletes the row **and** best-effort removes the underlying file (unless another row still references the same image key). Optional **`dealerId`** query for **`ADMIN`**. If the deleted row was the **starred** vehicle photo, the **oldest remaining** vehicle photo on the process is **auto-promoted** to starred (so a process with any vehicle photos always keeps exactly one primary).
 
 **Error codes:** `4056`, `4034`, `4032`–`4033`, `4226`.
 
@@ -2961,7 +3206,7 @@ Agent-scope error codes:
 
 ## Agents
 
-CRUD for agents. `firmName`, `agentName`, and `displayName` are **required**; contact/address fields are optional. `emailId`, `mobileNo`, and `whatsappNo` are **unique when provided** (multiple agents may omit them). `isSubscribe` defaults to `false` on create.
+CRUD for agents. `firmName`, `agentName`, and `displayName` are **required**; contact/address fields are optional. `emailId`, `mobileNo`, and `whatsappNo` are **unique when provided** (multiple agents may omit them). `isSubscribe` defaults to `false` on create. `isActive` (the super-admin access switch) defaults to `true` and is **not** accepted by create/update/`me` — it changes only through `PATCH /agents/:id/access`.
 
 **Auth:** Bearer JWT required on all endpoints. These are **dealer/admin-facing** (not agent-scoped).
 
@@ -2974,6 +3219,7 @@ CRUD for agents. `firmName`, `agentName`, and `displayName` are **required**; co
 - `emailId` (nullable, valid email, max 255; **unique** when set)
 - `whatsappNo` (nullable, max 20; **unique** when set)
 - `isSubscribe` (boolean, default `false`)
+- `isActive` (boolean, default `true`) — super-admin access switch; `false` = **paused** (the agent's login users cannot sign in and live sessions get `403` / `4022`). Returned on every agent row; read-only except via `PATCH /agents/:id/access`.
 - `createdAt` / `updatedAt` (timestamps)
 
 ---
@@ -3112,6 +3358,30 @@ Update an existing agent. **Super-admin only** (`4038`) — an agent edits their
 ```
 
 **Response (200):** `data` is `{ id, isSubscribe }`. **Error codes:** `4038` — not a super-admin; `4044` — agent not found.
+
+---
+
+### PATCH /api/v1/agents/:id/access
+
+**Super-admin only.** Pause or resume an agent's access (`isActive`). `false` = **paused**: none of the agent's login users can sign in, and every user already signed in is rejected with **403 `4022`** on their next request (see **Paused firms** under [Using the JWT](#using-the-jwt)). `true` = resumed (users sign in again). Separate from `isSubscribe` (capability) and `approvalStatus` (registration approval) — neither is touched. Does not affect the dealers this agent works for.
+
+**Auth:** Bearer token required; super-admin (`4038` otherwise). **Path params:** `id` = `agentId`. **Request body:** `isActive` (boolean, required).
+
+```json
+{ "isActive": false }
+```
+
+**Response (200):**
+
+```json
+{
+  "statusCode": 200,
+  "message": "Agent access updated",
+  "data": { "id": "uuid", "isActive": false }
+}
+```
+
+**Error codes:** `4038` — not a super-admin; `4044` — agent not found; `4220` — invalid `id` / missing or non-boolean `isActive`.
 
 ---
 
@@ -3683,7 +3953,7 @@ Assign a vehicle process + **one or more** RTO services to a granted agent — *
 
 When `cost > 0`, a khata `CREDIT` ledger entry (dealer owes the agent) is posted **atomically per created service**, linked to each new assignment via `assignmentId`.
 
-The `(processId, agentId, serviceId)` triple is unique. Services **already actively assigned** to that agent for the process are **skipped** (returned in `skippedServiceIds`); a triple whose assignment was previously **CANCELLED** is transparently **reactivated**. If **every** requested service is already live, `4230` is returned.
+The `(processId, agentId, serviceId)` triple is unique. Services **already actively assigned** to that agent for the process are **skipped** (returned in `skippedServiceIds`); a triple whose assignment was previously **CANCELLED** is transparently **reactivated** (same `assignmentId`; its `createdAt` becomes the time of the re-assignment and any cost left from its earlier life is reversed). If **every** requested service is already live, `4230` is returned.
 
 ```json
 {
@@ -3711,7 +3981,7 @@ List the **non-cancelled** assignments for a vehicle process (oldest first). **D
 
 **Query params:** `processId` (UUID, required).
 
-**Response (200):** `data` is an array of assignments (same nested shape as create, **including `cost`** — the current live ledger cost per assignment, or `null`).
+**Response (200):** `data` is an array of assignments (same nested shape as create, **including `cost`** — the current live ledger cost per assignment, or `null`). The cost is the latest live `CREDIT` linked to the assignment that the **dealer side posted in the assignment's own dealer↔agent book**; an entry in any other book, or a credit the agent posted against the job, is never shown here (it stays an ordinary ledger entry).
 
 **Error codes:** `4040` — process not found; `4034` — process belongs to another dealer; `4032`–`4033`, `4226` — dealer scope.
 
@@ -3758,6 +4028,95 @@ Cancel a single assignment (sets `status = CANCELLED`). **Dealer-scoped** — th
 **Response (200):** `data` is the updated (cancelled) assignment row.
 
 **Error codes:** `4040` — assignment not found; `4034` — assignment belongs to another dealer; `4032`–`4033`, `4226` — dealer scope.
+
+---
+
+### GET /api/v1/process-assignments/by-agent/:agentId
+
+List the work the **calling dealer** has assigned to **one agent**, paginated, newest first — one row per assignment (a process + one RTO service). Each row carries the RTO service, the **agent's own kanban status**, the live ledger **cost**, and a summary of the source vehicle process. **Dealer-scoped** — dealer resolved from the JWT. `CANCELLED` assignments and assignments whose process is in the recycle bin are left out. The dealer must have (or have had) a grant with the agent; it still works after the grant is revoked, so past work stays visible.
+
+**Auth:** Bearer token required.
+
+**Path params:** `agentId` (UUID).
+
+**Query params:**
+
+| Param | Type | Notes |
+|---|---|---|
+| `page`, `limit` | whole number ≥ 1, optional | Default `1` / `10`. A `limit` above `100` is accepted and capped at `100`; `page` may not exceed `1000000`. Fractions, `0` and negatives are rejected (`4220`). |
+| `search` | string, optional (≤100) | Matches the vehicle **registration number** (spaces/punctuation ignored), **make**, **model**, or the **service** name / short name. Case-insensitive. With several words, a row also matches when **every word** matches one of those fields (`maruti swift` = make + model); only the first **6 distinct words** are used for this rule. `%` and `_` are searched literally. |
+| `agentStatusId` | UUID or `none`, optional | Only assignments in that agent status; `none` = assignments the agent has not put in any status yet. |
+
+**Response (200):** paginated; `data.data` is an array of:
+
+```json
+{
+  "assignmentId": "uuid",
+  "processId": "uuid",
+  "dealerId": "uuid",
+  "agentId": "uuid",
+  "serviceId": "uuid",
+  "agentStatusId": "uuid | null",
+  "status": "OPEN | COMPLETED",
+  "note": "string | null",
+  "assignedByUserId": "uuid | null",
+  "createdAt": "2026-10-13T09:00:00.000Z",
+  "updatedAt": "2026-10-13T09:00:00.000Z",
+  "service": { "serviceId": "uuid", "serviceName": "Name transfer", "shortName": "TO" },
+  "agentStatus": { "statusId": "uuid", "statusName": "In RTO", "colour": "#F59E0B" },
+  "cost": { "ledgerEntryId": "uuid", "amount": 1500, "entryDate": "2026-10-13T09:00:00.000Z", "description": "Agent cost" },
+  "process": {
+    "processId": "uuid",
+    "status": "SOLD | COMPLETE | SCRAP | null",
+    "dealNumber": "D-101 | null",
+    "processDate": "2026-10-01T00:00:00.000Z | null",
+    "trackingNumber": "EK123456789IN | null",
+    "hasReceipt": true,
+    "vehicle": { "registrationNumber": "GJ05AB1234", "make": "Maruti", "model": "Swift", "manufactureYear": 2019 },
+    "tags": [{ "tagId": "uuid", "tagName": "Priority", "colour": "#ef4444" }]
+  }
+}
+```
+
+- **`agentStatus`** — the agent's own status for this job, or `null` when the agent has not set one.
+- **`cost`** — the current live ledger cost of the assignment (same rule as `GET /process-assignments?processId=`), or `null`. Only a **dealer-posted** entry in the assignment's **own** dealer↔agent book counts.
+- **`process.status`** — the dealer's lifecycle status; `null` = open.
+- **`process.trackingNumber`** / **`process.hasReceipt`** — the RC-book tracking number the agent entered and whether the agent has uploaded an RTO receipt. The receipt file itself comes from `GET /vehicle-processes/:id/details`.
+- **`process.tags`** — ordered by `tagName`, `[]` when none. `process.vehicle` is `null` when the process has no vehicle.
+- Rows are ordered by `createdAt` descending, then `assignmentId`, so pages never overlap. `createdAt` is the date the work was assigned; a job that was cancelled and assigned again carries the date of the **re-assignment**.
+
+**Error codes:** `4044` — the dealer has never granted that agent (also an unknown agent id); `4220` — invalid `agentId`, `agentStatusId`, `page`, `limit` or `search` (over 100 characters, or containing a NUL byte); `4032`–`4033`, `4226` — dealer scope (an agent or dealer-less token is refused).
+
+---
+
+### GET /api/v1/process-assignments/by-agent/:agentId/summary
+
+Totals for **all** the work the calling dealer has assigned to one agent — the same rows as the list above, but independent of its `search` / `agentStatusId` / page. **Dealer-scoped.**
+
+**Auth:** Bearer token required.
+
+**Path params:** `agentId` (UUID).
+
+**Response (200):**
+
+```json
+{
+  "agent": { "agentId": "uuid", "firmName": "Fast RTO Services", "agentName": "Ramesh Patel", "displayName": "Fast RTO", "mobileNo": "9876543210", "emailId": "fast@rto.dev" },
+  "grantStatus": "ACTIVE | REVOKED",
+  "totals": { "assignments": 23, "processes": 12, "costedAssignments": 16, "totalCost": 34500.5 },
+  "byStatus": [
+    { "statusId": "uuid", "statusName": "Docs received", "colour": "#2563EB", "count": 6 },
+    { "statusId": "uuid", "statusName": "In RTO", "colour": "#F59E0B", "count": 6 },
+    { "statusId": null, "statusName": "No status", "colour": null, "count": 5 }
+  ]
+}
+```
+
+- **`totals.assignments`** — live assignments; **`processes`** — distinct vehicle processes among them; **`costedAssignments`** — how many carry a live cost; **`totalCost`** — the sum of those costs (always equals the sum of the list rows' `cost.amount`).
+- **`byStatus`** — every one of the agent's statuses in the agent's board order (**zero counts included**), followed by a `statusId: null` "No status" entry **only when** some assignment has no status. Its counts add up to `totals.assignments`.
+- **`grantStatus`** — whether the dealer's grant to the agent is still live.
+
+**Error codes:** `4044` — the dealer has never granted that agent; `4220` — invalid `agentId`; `4032`–`4033`, `4226` — dealer scope.
 
 ---
 
@@ -4127,7 +4486,7 @@ Post a single credit/debit entry to the pair (caller + counterparty). Resolves t
 | direction      | string | Yes      | `CREDIT` or `DEBIT` (see **Sign convention**) |
 | amount         | number | Yes      | `> 0`, at most 2 decimal places, ≤ `999999999999.99` |
 | description    | string | No       | Trimmed, max 2000 chars |
-| assignmentId   | string | No       | UUID — links the entry to a process assignment |
+| assignmentId   | string | No       | UUID — links the entry to a process assignment. The assignment must belong to **this same** dealer↔agent pair, otherwise `4236` |
 
 **Example:**
 
@@ -4179,7 +4538,7 @@ Post a single credit/debit entry to the pair (caller + counterparty). Resolves t
 }
 ```
 
-**Error codes:** `4054` — no active dealer↔agent relationship (posting blocked); `4057` — agent caller's placeholder dealer is not connected to a real dealer; `4040` — dealer (counterparty) not found; `4059` — token is not a dealer or agent account; `4220` — validation (bad UUID, non-positive or >2dp amount, invalid `direction`).
+**Error codes:** `4054` — no active dealer↔agent relationship (posting blocked); `4057` — agent caller's placeholder dealer is not connected to a real dealer; `4040` — dealer (counterparty) not found; `4236` — `assignmentId` does not belong to this dealer↔agent pair (an unknown id gets the same answer); `4059` — token is not a dealer or agent account; `4220` — validation (bad UUID, non-positive or >2dp amount, invalid `direction`).
 
 ---
 
@@ -4307,7 +4666,7 @@ Settle the pair by posting a balancing entry that drives `balance` toward `0`. O
 
 ### POST /api/v1/ai/analyze-image
 
-Upload a single image and analyze it with Gemini. The model is configurable via `GEMINI_MODEL` (default: `gemini-3-flash-preview`).
+Upload a single RC image. The backend sends the image **directly to Gemini vision**, which returns structured JSON in one call (thinking disabled for cost/latency). The model is configurable via `GEMINI_MODEL`.
 
 **Auth:** None.
 
@@ -4358,7 +4717,7 @@ Upload a single image and analyze it with Gemini. The model is configurable via 
 
 ### POST /api/v1/ai/analyze-id-proof
 
-Upload a single image of an Indian identity document (Aadhaar, PAN, Driving Licence, Voter ID, Passport, etc.) and extract name/address fields with Gemini. Uses the same `GEMINI_MODEL` as analyze-image.
+Upload a single image of an Indian identity document (Aadhaar, PAN, Driving Licence, Voter ID, Passport, etc.) and extract name/address fields. Same pipeline as analyze-image (image sent directly to Gemini vision).
 
 **Auth:** None.
 
@@ -4401,6 +4760,8 @@ Upload a single image of an Indian identity document (Aadhaar, PAN, Driving Lice
 Self-service signup for dealers/agents. A visitor registers (choosing dealer or agent and setting their own password); the account is created **PENDING** with the login email **unverified**, and a signup OTP is emailed. They verify the email (`POST /auth/verify-otp`, which signs them in) and land on a **pending-approval** screen. A super-admin **approves** (unlocks access; a dealer is also marked subscribed) or **rejects** (blocks access, with a reason). Firms created by a super-admin or via an agent invitation are `APPROVED` by default, so only self-registrations are gated.
 
 > **Access gate.** While a linked dealer/agent firm is `PENDING`/`REJECTED`, its token is accepted only on `/auth/*` routes (e.g. `/auth/me`, logout); every other authenticated route returns **403 `4021`**. The token carries `approvalStatus`; `GET /auth/me` returns the fresh (DB-read) value so the pending screen can detect approval, then refresh the token.
+>
+> **Paused firms are a separate, stricter gate.** If the super-admin has paused the firm (`isActive: false`), every authenticated route returns **403 `4022`** — with **no `/auth` exemption** (`GET /auth/me` included) — and it is checked **before** the `4021` gate. See **Paused firms** under [Using the JWT](#using-the-jwt).
 
 ### POST /api/v1/registrations
 
@@ -4412,7 +4773,7 @@ Success `201`: `{ emailId, registerAs }`. Then verify via `POST /auth/verify-otp
 
 ### GET /api/v1/auth/me
 
-**Auth (any).** Returns `{ user: { userId, emailId, userName, emailVerified, dealerId, agentId, isSuperAdmin, approvalStatus, approvalReason } }` with a fresh approval state. Allowed even for a pending/rejected firm.
+**Auth (any).** Returns `{ user: { userId, emailId, userName, emailVerified, dealerId, agentId, isSuperAdmin, approvalStatus, approvalReason } }` with a fresh approval state. Allowed even for a pending/rejected firm — but **not** for a paused one: it returns **403 `4022`** like every other authenticated route, which is what lets a signed-in tab polling this endpoint detect a pause.
 
 ### GET /api/v1/registrations
 
