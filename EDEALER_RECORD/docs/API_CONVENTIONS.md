@@ -4,7 +4,7 @@ How every endpoint in this backend is shaped. The per-endpoint reference is [api
 
 ## Base & auth
 
-- Base URL `http://localhost:4002` (per `PORT`), prefix **`/api/v1`** (per `API_PREFIX`). Health: `GET /api/v1/health`.
+- Base URL `http://localhost:4002` (per `PORT`), prefix **`/api/v1`** (per `API_PREFIX`). Health: `GET /api/v1/health` (liveness) and `GET /api/v1/health/ready` (readiness: database answers). Production: `https://api.dcarjt.com` behind the edge nginx (see `deploy/README.md`).
 - Protected routes require `Authorization: Bearer <accessToken>`. Set on a router with `router.use(authenticate)`.
 - Access tokens carry `{ sub, email, role, dealerId?, purpose }`. `purpose: 'PASSWORD_RESET'` tokens are rejected by `authenticate` and accepted only by `authenticatePasswordReset` (used solely by `POST /auth/reset-password`).
 - The frontend implements a refresh flow against `/auth/refresh` on `401`.
@@ -120,8 +120,21 @@ List endpoints accept `?page=&limit=` (query). `parsePagination` clamps to **pag
 | `4057` | 422 | Placeholder khata: agent must own the placeholder (independent ledger) or connect it to a real dealer first | khata service |
 | `4058` | 422 | Khata account is already settled (nothing to settle) | khata service |
 | `5000` | 500 | Unhandled Prisma / database error | error.middleware |
+| `5030` | 503 | Readiness: the database did not answer within 2 s | health service (`GET /health/ready`) |
 
 When adding a new guard, pick the next free code in the right band and **document it here and in API.md**. Reuse existing semantics (e.g. duplicate → `409x`) rather than inventing overlapping codes.
+
+### Errors produced by the production proxy (not by the app)
+
+In production the edge nginx in front of the API ([`deploy/nginx/templates/default.conf.template`](../../deploy/nginx/templates/default.conf.template)) answers some requests itself, in the same error envelope with **`code: 0`**:
+
+| HTTP | When | Message |
+|------|------|---------|
+| `503` | The API container cannot be reached (deploy in progress, crash) | Service temporarily unavailable. Please try again shortly. |
+| `429` | One visitor (IPv4 address or IPv6 /64) went over the rate limit, with `Retry-After: 60`. Credential and e-mail requests share one budget: `POST /auth/*` except `/auth/refresh`, `POST /registrations`, and `GET`/`POST /agent-invitations/accept/*` (default 30/min, burst 20). The unauthenticated `POST`/`PUT /upload/*` and `POST /ai/*` share another (default 60/min, burst 40). | Too many attempts. Please wait a minute and try again. |
+| `413` | Request body over `CLIENT_MAX_BODY_SIZE` (default 12 MB) | The upload is too large. |
+
+These responses carry the same CORS headers as the API's own, for the web app's origin. While the API is down, nginx also answers CORS preflights (`204`), so the browser receives the JSON `503`. The frontend shows `message` as usual; nothing needs to branch on these.
 
 ## When you add or change an endpoint (definition of done)
 

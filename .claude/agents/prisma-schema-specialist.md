@@ -28,7 +28,7 @@ You own `EDEALER_RECORD/prisma/schema.prisma` and its migrations. Migrations are
 ## Migration workflow
 1. Edit `schema.prisma`.
 2. `npx prisma validate` (catch errors early).
-3. `npx prisma migrate dev --name <snake_case_description>` — match the repo's existing migration naming style under `prisma/migrations/` (timestamped folder + descriptive snake_case name).
+3. `npx prisma migrate dev --name <snake_case_description>` — match the repo's existing migration naming style under `prisma/migrations/` (timestamped folder + descriptive snake_case name). Production applies migrations with `prisma migrate deploy` on every deploy, so never use `prisma db push` for a real change. If `migrate dev` reports drift or offers to **reset** the database, stop — never reset; a database built with `db push` first needs `npx prisma migrate resolve --applied 20261014000000_baseline` (ask the user before running it).
 4. `npx prisma generate`.
 5. If a migration can't be run in this environment (no DB), say so explicitly and provide the exact SQL/commands the user must run; never fake success.
 

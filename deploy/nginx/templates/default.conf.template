@@ -1,0 +1,198 @@
+# Edge server blocks. Rendered by scripts/lib.sh (render_nginx) with envsubst; ONLY these variables
+# are substituted, everything else (nginx's own $variables) is left as is:
+#   ${DOMAIN} ${WWW_DOMAIN} ${API_DOMAIN} ${TLS_CERTIFICATE} ${TLS_CERTIFICATE_KEY}
+#   ${CLIENT_MAX_BODY_SIZE} ${PROXY_READ_TIMEOUT} ${AUTH_RATE_LIMIT} ${AUTH_RATE_BURST}
+#   ${PUBLIC_WRITE_RATE_LIMIT} ${PUBLIC_WRITE_RATE_BURST} ${HSTS_MAX_AGE}
+
+# ── Rate limits (answer 429) ──────────────────────────────────────────────────────────────────────
+# One bucket per visitor: an IPv4 address, or an IPv6 /64 (one customer usually holds a whole /64).
+# The real visitor address comes from Cloudflare (snippets/cloudflare-realip.conf).
+map $remote_addr $client_key {
+    "~^(?<client_v6_net>[0-9a-fA-F]{1,4}:[0-9a-fA-F]{1,4}:[0-9a-fA-F]{1,4}:[0-9a-fA-F]{1,4}):" $client_v6_net;
+    "~^(?<client_v6_short>[0-9a-fA-F:]+)::" $client_v6_short;
+    default $binary_remote_addr;
+}
+
+# Requests that try credentials or send e-mail: sign-in, sign-up, OTPs, password reset, passkey sign-in,
+# self-registration and agent invitations. Matching ignores case, like the API's routing. The session
+# heartbeat (GET /auth/me), token refresh and CORS preflights get an empty key: not counted.
+map "$request_method $uri" $auth_limit_key {
+    "~*^POST /api/v1/auth/(?!refresh/?$)"             $client_key;
+    "~*^POST /api/v1/registrations/?$"                $client_key;
+    "~*^(GET|POST) /api/v1/agent-invitations/accept/" $client_key;
+    default                                           "";
+}
+limit_req_zone $auth_limit_key zone=auth:10m rate=${AUTH_RATE_LIMIT};
+
+# Unauthenticated endpoints that store files or call the paid OCR service.
+map "$request_method $uri" $public_write_key {
+    "~*^(POST|PUT) /api/v1/(upload|ai)/" $client_key;
+    default                              "";
+}
+limit_req_zone $public_write_key zone=public_write:10m rate=${PUBLIC_WRITE_RATE_LIMIT};
+limit_req_status 429;
+
+# The web app calls the API cross-origin, so errors produced here need CORS headers to be readable.
+map $http_origin $cors_allow_origin {
+    "https://${DOMAIN}" $http_origin;
+    default             "";
+}
+
+# Shared-memory zones (needed for `resolve`) must be at least 8 memory pages: 1m is safe on every
+# kernel page size, including 64 KB-page arm64 kernels.
+upstream frontend_upstream {
+    zone frontend_upstream 1m;
+    server frontend:8080 resolve;
+    keepalive 8;
+}
+
+upstream api_upstream {
+    zone api_upstream 1m;
+    server api:4002 resolve;
+    keepalive 16;
+    # Shorter than Node's 5 s keep-alive, so nginx never reuses a connection Node is closing.
+    keepalive_timeout 4s;
+}
+
+# ── Port 80 (container 8080) ──────────────────────────────────────────────────────────────────────
+# Known names go to HTTPS. The container health check uses /nginx-health on any name.
+server {
+    listen 8080 default_server;
+    server_name _;
+
+    location = /nginx-health {
+        access_log off;
+        default_type text/plain;
+        return 200 "ok\n";
+    }
+
+    # Unknown host names: close the connection without a response.
+    location / {
+        return 444;
+    }
+}
+
+server {
+    listen 8080;
+    server_name ${DOMAIN} ${WWW_DOMAIN} ${API_DOMAIN};
+
+    location = /nginx-health {
+        access_log off;
+        default_type text/plain;
+        return 200 "ok\n";
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+# ── Port 443 (container 8443) ─────────────────────────────────────────────────────────────────────
+# Unknown names (and direct-to-IP scans): refuse the TLS handshake, so no certificate is shown.
+server {
+    listen 8443 ssl default_server;
+    http2 on;
+    server_name _;
+    ssl_reject_handshake on;
+}
+
+# www → apex (one origin for the web app keeps CORS and passkeys simple).
+server {
+    listen 8443 ssl;
+    http2 on;
+    server_name ${WWW_DOMAIN};
+
+    ssl_certificate ${TLS_CERTIFICATE};
+    ssl_certificate_key ${TLS_CERTIFICATE_KEY};
+    include /etc/nginx/live/snippets/ssl.conf;
+
+    add_header Strict-Transport-Security "max-age=${HSTS_MAX_AGE}" always;
+    return 301 https://${DOMAIN}$request_uri;
+}
+
+# Web app.
+server {
+    listen 8443 ssl;
+    http2 on;
+    server_name ${DOMAIN};
+
+    ssl_certificate ${TLS_CERTIFICATE};
+    ssl_certificate_key ${TLS_CERTIFICATE_KEY};
+    include /etc/nginx/live/snippets/ssl.conf;
+
+    add_header Strict-Transport-Security "max-age=${HSTS_MAX_AGE}" always;
+    include /etc/nginx/live/snippets/security-headers.conf;
+
+    # Plain page instead of nginx's own when the frontend container is down.
+    error_page 502 503 504 /50x.html;
+    location = /50x.html {
+        internal;
+        root /usr/share/nginx/html;
+    }
+
+    location / {
+        include /etc/nginx/live/snippets/proxy-common.conf;
+        proxy_read_timeout 30s;
+        proxy_pass http://frontend_upstream;
+    }
+}
+
+# API. Its security headers (HSTS, nosniff, CORP, …) come from Helmet in the app.
+server {
+    listen 8443 ssl;
+    http2 on;
+    server_name ${API_DOMAIN};
+
+    ssl_certificate ${TLS_CERTIFICATE};
+    ssl_certificate_key ${TLS_CERTIFICATE_KEY};
+    include /etc/nginx/live/snippets/ssl.conf;
+
+    # Uploads are at most 10 MB in the app; leave room for the request envelope.
+    client_max_body_size ${CLIENT_MAX_BODY_SIZE};
+
+    # Rate limits; a request whose key is empty (see the maps at the top) is not counted.
+    limit_req zone=auth burst=${AUTH_RATE_BURST} nodelay;
+    limit_req zone=public_write burst=${PUBLIC_WRITE_RATE_BURST} nodelay;
+
+    # JSON in the API's own error shape (not nginx HTML) for errors produced here, at the proxy, with
+    # CORS headers so the web app can read them.
+    error_page 502 503 504 = @api_unavailable;
+    location @api_unavailable {
+        # While the API is down, answer CORS preflights here, so the real request gets this JSON 503.
+        if ($request_method = OPTIONS) {
+            add_header Access-Control-Allow-Origin $cors_allow_origin always;
+            add_header Access-Control-Allow-Credentials "true" always;
+            add_header Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE" always;
+            add_header Access-Control-Allow-Headers "Content-Type, Authorization" always;
+            add_header Vary "Origin" always;
+            return 204;
+        }
+        default_type application/json;
+        add_header Cache-Control "no-store" always;
+        include /etc/nginx/live/snippets/cors-error.conf;
+        return 503 '{"success":false,"statusCode":503,"code":0,"message":"Service temporarily unavailable. Please try again shortly."}';
+    }
+    error_page 429 = @api_rate_limited;
+    location @api_rate_limited {
+        default_type application/json;
+        add_header Cache-Control "no-store" always;
+        add_header Retry-After "60" always;
+        include /etc/nginx/live/snippets/cors-error.conf;
+        return 429 '{"success":false,"statusCode":429,"code":0,"message":"Too many attempts. Please wait a minute and try again."}';
+    }
+    error_page 413 = @api_too_large;
+    location @api_too_large {
+        default_type application/json;
+        add_header Cache-Control "no-store" always;
+        include /etc/nginx/live/snippets/cors-error.conf;
+        return 413 '{"success":false,"statusCode":413,"code":0,"message":"The upload is too large."}';
+    }
+
+    location / {
+        include /etc/nginx/live/snippets/proxy-common.conf;
+        # Document OCR and Excel/PDF exports can take a while. Cloudflare itself gives up after
+        # 100 s on proxied requests, so values above that only matter for direct connections.
+        proxy_read_timeout ${PROXY_READ_TIMEOUT};
+        proxy_pass http://api_upstream;
+    }
+}

@@ -2,14 +2,17 @@
 
 A multi-tenant SaaS for second-hand **vehicle dealers** and **RTO agents**, with a **super admin** who approves subscriptions. Dealers manage vehicle buy/sell records and a per-vehicle "process" (upload RC/PUC/Insurance/Owner-ID → OCR auto-fills fields → verify & save), record buyer details, create tasks, and assign processes to agents for RTO services (name transfer, etc.). A khata-book ledger tracks money between dealers and agents.
 
-> This folder is **not** a git repo. It contains **two independent git repos**. Work happens inside one of them at a time.
+> This folder is **one git repository** (a monorepo) holding two independent apps plus their deployment. Work happens inside one app at a time.
 
-## Repos
+## Apps and deployment
 
 | Folder | Role | Stack | Port | Read first |
 |--------|------|-------|------|------------|
 | [`EDEALER_RECORD/`](EDEALER_RECORD/) | **Backend** API | Express 4 · TypeScript 5 (strict) · Prisma 5 · PostgreSQL | `4002`, prefix `/api/v1` | [`EDEALER_RECORD/CLAUDE.md`](EDEALER_RECORD/CLAUDE.md) |
 | [`RTO-Super-Admin/`](RTO-Super-Admin/) | **Frontend** (Super-Admin panel today) | React 19 · Vite · JavaScript/JSX · Tailwind v4 · shadcn/ui · TanStack Query | `5173` | [`RTO-Super-Admin/CLAUDE.md`](RTO-Super-Admin/CLAUDE.md) |
+| [`deploy/`](deploy/) + [`.github/workflows/`](.github/workflows/) | **Production**: Docker Compose stack (nginx, frontend, API, PostgreSQL) on an Oracle Cloud VM behind Cloudflare; CI and deploy via GitHub Actions | Docker · Compose · nginx · bash | 80/443 | [`deploy/README.md`](deploy/README.md) |
+
+Each app has its own `Dockerfile` and `.dockerignore`. Schema changes must ship as Prisma migrations (`prisma migrate dev`), because every deploy runs `prisma migrate deploy`.
 
 ## How they connect
 
@@ -19,8 +22,9 @@ A multi-tenant SaaS for second-hand **vehicle dealers** and **RTO agents**, with
 
 ## Working agreements
 
-- **No cross-repo assumptions in one edit.** A feature that spans both repos is two coordinated changes (backend slice + frontend page/service), each following its own repo's rulebook.
-- Pick the right rulebook: backend work → `EDEALER_RECORD/CLAUDE.md`; frontend work → `RTO-Super-Admin/CLAUDE.md`. Both load automatically when you edit files in their repo.
+- **No cross-app assumptions in one edit.** A feature that spans both apps is two coordinated changes (backend slice + frontend page/service), each following its own app's rulebook.
+- Pick the right rulebook: backend work → `EDEALER_RECORD/CLAUDE.md`; frontend work → `RTO-Super-Admin/CLAUDE.md`. Both load automatically when you edit files in their folder.
+- New backend environment variables go in `EDEALER_RECORD/.env.example` **and** `deploy/api.env.example` (production). New `VITE_*` values are public build arguments: add them to `RTO-Super-Admin/Dockerfile` and the frontend build in `.github/workflows/deploy-production.yml`.
 
 ## Claude tooling in this workspace
 

@@ -8,11 +8,12 @@ import { resolveUploadPublicOrigin } from '../utils/request-origin';
  * Issues a unique `fileKey` and URLs for direct PUT upload and public read.
  * Uses {@link resolveUploadPublicOrigin} so `localhost` is rewritten to the LAN IP when configured.
  */
-export const generateUploadHandler = async (req: Request, res: Response): Promise<void> => {
+export const generateUploadHandler = (req: Request, res: Response): Promise<void> => {
   const { fileName, contentType } = req.body as { fileName: string; contentType: string };
   const publicOrigin = resolveUploadPublicOrigin(req);
   const result = uploadService.generateUploadUrl(fileName, contentType, publicOrigin);
   sendSuccess(res, 'Upload URL created', result, StatusCodes.CREATED);
+  return Promise.resolve();
 };
 
 /**

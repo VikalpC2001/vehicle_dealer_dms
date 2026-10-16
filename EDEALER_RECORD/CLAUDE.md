@@ -9,11 +9,21 @@ Express 4 + TypeScript 5 (strict) + Prisma 5 + PostgreSQL API for the RTO dealer
 ```bash
 npm install                 # also runs `prisma generate` (postinstall)
 cp .env.example .env        # then set DATABASE_URL, JWT_SECRET, GEMINI_API_KEY, etc.
-npm run prisma:push         # or prisma:migrate for a tracked migration
+npx prisma migrate dev      # applies prisma/migrations to your local database
 npm run dev                 # tsx watch src/server.ts → http://localhost:4002
 ```
 
-Other scripts: `build` (tsc), `start` (node dist), `lint` / `lint:fix` (eslint src --ext .ts), `format` (prettier), `prisma:migrate|studio|push|generate`. **No test runner and no seed script exist yet** — don't invent test commands. Port `4002`, prefix `/api/v1` (configurable via `PORT` / `API_PREFIX`).
+Other scripts: `build` (tsc), `start` (node dist), `lint` / `lint:fix` (eslint src --ext .ts), `format` (prettier), `prisma:migrate|deploy|status|studio|generate`, `prisma:seed` (dev seed), `prisma:seed:geography` (states + cities), `bootstrap:production` (first super-admin + default document categories; run by `deploy/scripts/bootstrap.sh`). **No test runner exists yet** — don't invent test commands. Port `4002`, prefix `/api/v1` (configurable via `PORT` / `API_PREFIX`). Liveness `GET /health`, readiness `GET /health/ready`.
+
+### Database migrations — production applies them, so never `db push` a schema change
+
+- Change `prisma/schema.prisma`, then `npx prisma migrate dev --name <change>` and commit the new folder in `prisma/migrations/`. Every deploy runs `prisma migrate deploy` before starting the new API (`deploy/scripts/deploy.sh`); CI fails when the schema and the migrations disagree.
+- `prisma/migrations/20261014000000_baseline` is the whole schema at the move to Docker deployment. The earlier, incomplete history is kept (not applied) in `prisma/migrations-legacy/`.
+- A local database made earlier with `db push` (no `_prisma_migrations` table): mark the baseline as applied **once** — `npx prisma migrate resolve --applied 20261014000000_baseline` — then use `migrate dev` as above. If `migrate dev` ever offers to **reset** the database, answer no and investigate the drift instead.
+- `prisma:push` is for throwaway experiments only: it creates no migration, so production would never get the change.
+- Keep migrations backward-compatible (add, backfill, then remove in a later release): a rollback runs the previous code on the newer schema.
+
+Production deployment (Docker, OCI, Cloudflare, GitHub Actions) is documented in [`../deploy/README.md`](../deploy/README.md).
 
 ## Architecture — strict layering
 
@@ -99,4 +109,4 @@ The system is mid-migration from (1) to (2). **New authorization logic should ta
 
 ## Definition of done
 
-Code compiles + migration applied (if schema changed) + `docs/api/API.md` and Postman updated + `npm run lint` clean.
+Code compiles + migration created with `prisma migrate dev` and committed (if schema changed) + `docs/api/API.md` and Postman updated + `npm run lint` clean.

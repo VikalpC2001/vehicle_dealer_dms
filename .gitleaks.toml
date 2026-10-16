@@ -1,0 +1,12 @@
+# Secret scanning (gitleaks, run by .github/workflows/ci.yml). Uses gitleaks' default rules plus the
+# narrow exception below. Keep exceptions specific: a path AND the exact non-secret value.
+title = "dcarjt gitleaks configuration"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Truncated example JWTs (only the header) in the API documentation"
+condition = "AND"
+paths = ['''^EDEALER_RECORD/docs/api/API\.md$''']
+regexes = ['''^eyJhbGciOiJIUzI1NiIs\.\.\.$''']

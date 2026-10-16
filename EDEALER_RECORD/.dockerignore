@@ -1,0 +1,22 @@
+# Only what the image build needs: package files, prisma/, tsconfig.json and src/.
+node_modules
+dist
+coverage
+logs
+uploads
+*.log
+
+# Secrets and local configuration — never sent to the build.
+.env
+.env.*
+!.env.example
+
+# Not needed in the image
+.git
+.cursor
+docs
+*.md
+.eslintrc.json
+.prettierrc
+Dockerfile
+.dockerignore

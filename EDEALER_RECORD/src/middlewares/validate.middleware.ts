@@ -39,7 +39,7 @@ export const validate =
   (schema: ZodSchema): RequestHandler =>
   (req: Request, res: Response, next: NextFunction): void => {
     const result = schema.safeParse({
-      body: req.body,
+      body: req.body as unknown,
       params: req.params,
       query: req.query,
     });

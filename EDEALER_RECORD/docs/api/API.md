@@ -74,7 +74,7 @@ Served by Express static middleware from `UPLOAD_DIR` (not under `/api/v1`). Sam
 
 ### GET /api/v1/health
 
-Health-check for load balancers and monitoring.
+Liveness check for load balancers and monitoring. Never touches the database (the Docker image's `HEALTHCHECK` uses it).
 
 **Auth:** None.
 
@@ -86,6 +86,24 @@ Health-check for load balancers and monitoring.
   "timestamp": "2025-03-15T12:00:00.000Z"
 }
 ```
+
+### GET /api/v1/health/ready
+
+Readiness check: the API can serve requests because its database answers a trivial query within 2 seconds. Used by the deploy health checks (`deploy/scripts/health-check.sh`) and uptime monitors.
+
+**Auth:** None.
+
+**Response (200):**
+
+```json
+{
+  "statusCode": 200,
+  "message": "Ready",
+  "data": { "status": "ok", "database": "ok", "timestamp": "2026-10-14T12:00:00.000Z" }
+}
+```
+
+**Errors:** `503` / `5030` — database unavailable (no answer within 2 seconds, or the query failed).
 
 ---
 

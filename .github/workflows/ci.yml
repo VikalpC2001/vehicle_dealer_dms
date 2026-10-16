@@ -1,0 +1,215 @@
+# Continuous integration: code checks for both apps, deploy-tooling lint, secret scan, and a full-stack
+# smoke test that builds the production images and runs the REAL deploy scripts against them
+# (deploy → bootstrap → upgrade → rollback → failed deploy with auto-rollback → backup → restore).
+#
+# Runs on pull requests and on pushes to branches other than main. On main, deploy-production.yml
+# calls this workflow first and only deploys when it passes.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches-ignore: [main]
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.ref }}
+  # Superseded runs are cancelled, except on main (each main commit is a deploy candidate).
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  NODE_VERSION: "22.23.3"
+  # Pinned tool versions; checksums are the published release digests.
+  SHELLCHECK_VERSION: v0.11.0
+  SHELLCHECK_SHA256: 8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198
+  HADOLINT_VERSION: v2.15.1
+  HADOLINT_SHA256: c7187db94eeeeca956519a6af171adc31453941a1e777961f6e680f697c8c507
+  ACTIONLINT_VERSION: "1.7.12"
+  ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+  GITLEAKS_VERSION: "8.30.1"
+  GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+
+jobs:
+  backend:
+    name: Backend (lint, build, migrations)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: EDEALER_RECORD
+    services:
+      postgres:
+        image: postgres:18.6-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci -d ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/ci?schema=public
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: EDEALER_RECORD/package-lock.json
+      - run: npm ci
+      - name: Validate the Prisma schema
+        run: npx prisma validate
+      - run: npm run lint
+      - name: Type-check and build
+        run: npm run build
+      - name: Apply all migrations to an empty database
+        run: npx prisma migrate deploy
+      - name: Migrations must match schema.prisma (no drift)
+        run: |
+          if ! npx prisma migrate diff --from-url "$DATABASE_URL" --to-schema-datamodel prisma/schema.prisma --exit-code; then
+            echo "::error::prisma/schema.prisma has changes without a migration. Run: npx prisma migrate dev --name <change>"
+            exit 1
+          fi
+
+  frontend:
+    name: Frontend (lint, build)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: RTO-Super-Admin
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: RTO-Super-Admin/package-lock.json
+      - run: npm ci
+      # Advisory until the existing lint errors are fixed; then remove continue-on-error.
+      - name: Lint (advisory)
+        run: npm run lint
+        continue-on-error: true
+      - name: Production build
+        run: npm run build
+        env:
+          VITE_API_BASE_URL: https://api.example.invalid/api/v1
+
+  deploy-tooling:
+    name: Deploy tooling (shellcheck, hadolint, actionlint)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install pinned linters (checksum-verified)
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bin" "$RUNNER_TEMP/dl"
+          cd "$RUNNER_TEMP/dl"
+          curl -fsSLo shellcheck.tar.xz "https://github.com/koalaman/shellcheck/releases/download/${SHELLCHECK_VERSION}/shellcheck-${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
+          echo "${SHELLCHECK_SHA256}  shellcheck.tar.xz" | sha256sum -c -
+          tar -xJf shellcheck.tar.xz && mv "shellcheck-${SHELLCHECK_VERSION}/shellcheck" "$RUNNER_TEMP/bin/"
+          curl -fsSLo hadolint "https://github.com/hadolint/hadolint/releases/download/${HADOLINT_VERSION}/hadolint-linux-x86_64"
+          echo "${HADOLINT_SHA256}  hadolint" | sha256sum -c -
+          install -m 755 hadolint "$RUNNER_TEMP/bin/hadolint"
+          curl -fsSLo actionlint.tgz "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          echo "${ACTIONLINT_SHA256}  actionlint.tgz" | sha256sum -c -
+          tar -xzf actionlint.tgz actionlint && mv actionlint "$RUNNER_TEMP/bin/"
+          echo "$RUNNER_TEMP/bin" >>"$GITHUB_PATH"
+      - name: Shell scripts parse and pass shellcheck
+        run: |
+          for f in deploy/scripts/*.sh .github/scripts/*.sh; do bash -n "$f"; done
+          shellcheck --external-sources deploy/scripts/*.sh .github/scripts/*.sh
+      - name: Scripts are executable
+        run: |
+          bad="$(find deploy/scripts .github/scripts -name '*.sh' ! -name lib.sh ! -perm -u+x)"
+          if [[ -n "$bad" ]]; then echo "::error::not executable (git update-index --chmod=+x): $bad"; exit 1; fi
+      - name: Dockerfiles pass hadolint
+        run: hadolint --config .hadolint.yaml EDEALER_RECORD/Dockerfile RTO-Super-Admin/Dockerfile
+      - name: Workflows pass actionlint
+        run: actionlint -color
+
+  secret-scan:
+    name: Secret scan (gitleaks, full history)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Install gitleaks (checksum-verified)
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          curl -fsSLo gitleaks.tgz "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  gitleaks.tgz" | sha256sum -c -
+          tar -xzf gitleaks.tgz gitleaks
+      - name: Scan every commit
+        run: |
+          "$RUNNER_TEMP/gitleaks" git --no-banner --redact --config .gitleaks.toml --verbose .
+
+  images:
+    name: Images + full-stack smoke test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          driver-opts: image=moby/buildkit:v0.33.1@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
+      - name: Build api image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: EDEALER_RECORD
+          target: runtime
+          load: true
+          provenance: false
+          tags: ci.local/dcarjt/api:ci-1
+          cache-from: type=gha,scope=api-amd64
+          cache-to: type=gha,mode=max,scope=api-amd64
+      - name: Build api-migrate image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: EDEALER_RECORD
+          target: migrate
+          load: true
+          provenance: false
+          tags: ci.local/dcarjt/api-migrate:ci-1
+          cache-from: type=gha,scope=api-amd64
+      - name: Build frontend image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: RTO-Super-Admin
+          load: true
+          provenance: false
+          tags: ci.local/dcarjt/frontend:ci-1
+          build-args: |
+            VITE_API_BASE_URL=https://api.dcarjt.test/api/v1
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
+      - name: Image sizes
+        run: docker image ls 'ci.local/dcarjt/*'
+      - name: Full-stack smoke test with the deploy scripts
+        run: .github/scripts/smoke-test.sh
+      - name: Container logs (on failure)
+        if: failure()
+        run: |
+          docker ps -a
+          for c in $(docker ps -aq); do echo "::group::$(docker inspect -f '{{.Name}}' "$c")"; docker logs --tail 200 "$c" 2>&1 || true; echo "::endgroup::"; done

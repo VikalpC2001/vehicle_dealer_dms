@@ -23,13 +23,14 @@ const handlePrismaError = (err: PrismaClientKnownRequestError): AppError => {
       return new AppError('The requested record was not found', StatusCodes.NOT_FOUND, 4040);
     case 'P2003':
       return new AppError('Related record not found', StatusCodes.BAD_REQUEST, 4000);
-    default:
+    default: {
       logger.error(`Prisma error [${err.code}]: ${err.message}`, { meta: err.meta });
       const message =
         config.NODE_ENV === 'development'
           ? `Database error: ${err.message} (code: ${err.code})`
           : 'A database error occurred';
       return new AppError(message, StatusCodes.INTERNAL_SERVER_ERROR, 5000);
+    }
   }
 };
 

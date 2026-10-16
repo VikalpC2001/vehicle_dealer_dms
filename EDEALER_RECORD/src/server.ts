@@ -49,17 +49,48 @@ const startServer = async (): Promise<void> => {
       );
     });
 
-    const shutdown = async (signal: string): Promise<void> => {
+    let shuttingDown = false;
+    // While shutting down, every response closes its connection, so keep-alive connections (e.g. from
+    // the nginx proxy) end after their current request instead of keeping the old process busy.
+    server.prependListener('request', (_req, res) => {
+      if (shuttingDown) res.setHeader('Connection', 'close');
+    });
+    const shutdown = (signal: string): void => {
+      if (shuttingDown) {
+        logger.warn(`${signal} received again — exiting now`);
+        process.exit(1);
+      }
+      shuttingDown = true;
       logger.info(`${signal} received — shutting down gracefully`);
-      server.close(async () => {
-        await prisma.$disconnect();
-        logger.info('Database connection closed');
-        process.exit(0);
+
+      // Requests still running after the grace period are cut off. Docker sends SIGKILL once its own
+      // stop timeout passes, so SHUTDOWN_TIMEOUT_MS must stay below it.
+      const forceExit = setTimeout(() => {
+        logger.error('Graceful shutdown timed out — exiting with requests still open');
+        process.exit(1);
+      }, config.SHUTDOWN_TIMEOUT_MS);
+      forceExit.unref();
+
+      // Stop accepting new connections; `close` calls back once open requests have finished.
+      server.close((err) => {
+        void prisma
+          .$disconnect()
+          .catch((disconnectError: unknown) =>
+            logger.error('Database disconnect failed during shutdown', disconnectError),
+          )
+          .finally(() => {
+            logger.info('HTTP server and database connection closed');
+            process.exit(err ? 1 : 0);
+          });
       });
+      // Idle keep-alive connections would otherwise hold `close` open until they time out; connections
+      // that are busy now become idle after their response, so keep closing them as they do.
+      server.closeIdleConnections();
+      setInterval(() => server.closeIdleConnections(), 1000).unref();
     };
 
-    process.on('SIGTERM', () => void shutdown('SIGTERM'));
-    process.on('SIGINT', () => void shutdown('SIGINT'));
+    process.on('SIGTERM', () => shutdown('SIGTERM'));
+    process.on('SIGINT', () => shutdown('SIGINT'));
 
     // Recycle-bin auto-purge: sweep once on startup, then daily. Bin views also purge lazily, so this
     // is a convenience. `.unref()` lets the process exit during shutdown without waiting on the timer.

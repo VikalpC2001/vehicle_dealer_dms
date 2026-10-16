@@ -23,11 +23,11 @@ const prodFormat = combine(timestamp(), errors({ stack: true }), json());
  * JSON logs in production.
  */
 export const logger = createLogger({
-  level: config.NODE_ENV === 'production' ? 'warn' : 'debug',
+  level: config.LOG_LEVEL ?? (config.NODE_ENV === 'production' ? 'warn' : 'debug'),
   format: config.NODE_ENV === 'production' ? prodFormat : devFormat,
   transports: [
     new transports.Console(),
-    ...(config.NODE_ENV === 'production'
+    ...(config.NODE_ENV === 'production' && config.LOG_TO_FILES
       ? [
           new transports.File({ filename: 'logs/error.log', level: 'error' }),
           new transports.File({ filename: 'logs/combined.log' }),

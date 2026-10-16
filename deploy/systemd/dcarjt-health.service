@@ -1,0 +1,13 @@
+# Installed by scripts/setup-ubuntu.sh (@DEPLOY_USER@ and @DEPLOY_ROOT@ are filled in there).
+# Failures are posted to ALERT_WEBHOOK_URL (shared/.env). Logs: journalctl -u dcarjt-health
+[Unit]
+Description=dcarjt: health check (containers, database, API, web app, disk, backups)
+After=docker.service
+ConditionPathExists=@DEPLOY_ROOT@/current/scripts/health-check.sh
+
+[Service]
+Type=oneshot
+User=@DEPLOY_USER@
+Environment=DEPLOY_ROOT=@DEPLOY_ROOT@
+ExecStart=@DEPLOY_ROOT@/current/scripts/health-check.sh
+TimeoutStartSec=10min

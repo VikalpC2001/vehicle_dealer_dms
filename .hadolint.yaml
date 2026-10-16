@@ -1,0 +1,6 @@
+# hadolint configuration (CI lints EDEALER_RECORD/Dockerfile and RTO-Super-Admin/Dockerfile).
+ignored:
+  # Debian package versions are not pinned: the base image is pinned by digest, and pinning apt
+  # versions breaks the build as soon as the mirror drops the old version.
+  - DL3008
+failure-threshold: warning

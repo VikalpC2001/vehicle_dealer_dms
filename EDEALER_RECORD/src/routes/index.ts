@@ -1,4 +1,6 @@
 import { Router } from 'express';
+import { asyncHandler } from '../utils/async-handler';
+import { readinessHandler } from '../controllers/health.controller';
 import authRoutes from './auth.routes';
 import rtoServiceRoutes from './rto-service.routes';
 import dealerRoutes from './dealer.routes';
@@ -39,6 +41,9 @@ const router = Router();
 router.get('/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
+
+/** Readiness: the API can serve requests (its database answers). */
+router.get('/health/ready', asyncHandler(readinessHandler));
 
 router.use('/auth', authRoutes);
 router.use('/rto-services', rtoServiceRoutes);

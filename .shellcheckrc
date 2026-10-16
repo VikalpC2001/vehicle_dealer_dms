@@ -1,0 +1,9 @@
+# ShellCheck settings for deploy/scripts, .github/scripts and workflow `run:` blocks (via actionlint).
+external-sources=true
+
+# '$VAR' inside single quotes is expanded INSIDE a container on purpose
+# (e.g. docker compose exec postgres sh -c 'pg_dump -U "$POSTGRES_USER" …').
+disable=SC2016
+
+# Commands sent over ssh are built on the runner on purpose, with every value quoted via printf %q.
+disable=SC2029

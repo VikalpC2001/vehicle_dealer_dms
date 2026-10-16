@@ -1,0 +1,20 @@
+# Only the app sources, configuration and lockfile are needed to build.
+node_modules
+dist
+dist-ssr
+storybook-static
+coverage
+*.log
+
+# Local configuration and secrets — production values come from build arguments.
+.env
+.env.*
+!.env.example
+
+# Not needed in the image (.storybook and src/stories stay: vite.config.js loads the Storybook
+# test plugin when the config is evaluated, even for `vite build`)
+.git
+docs
+*.md
+Dockerfile
+.dockerignore

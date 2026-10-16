@@ -1,0 +1,17 @@
+# Installed by scripts/setup-ubuntu.sh (@DEPLOY_USER@ and @DEPLOY_ROOT@ are filled in there).
+# Run by hand: sudo systemctl start dcarjt-backup.service   Logs: journalctl -u dcarjt-backup
+[Unit]
+Description=dcarjt: back up PostgreSQL and uploaded files
+Wants=network-online.target
+After=network-online.target docker.service
+# Nothing to back up before the first deploy.
+ConditionPathExists=@DEPLOY_ROOT@/current/scripts/backup-postgres.sh
+
+[Service]
+Type=oneshot
+User=@DEPLOY_USER@
+Environment=DEPLOY_ROOT=@DEPLOY_ROOT@
+ExecStart=@DEPLOY_ROOT@/current/scripts/backup-postgres.sh --label daily
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=2h

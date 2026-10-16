@@ -174,6 +174,15 @@
             "url": "{{baseUrl}}/api/v1/health",
             "description": "Health-check endpoint for load balancers and monitoring."
           }
+        },
+        {
+          "name": "Readiness Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/health/ready",
+            "description": "Readiness: 200 when the database answers within 2 s, otherwise 503 / code 5030. No auth. Used by the deploy health checks."
+          }
         }
       ]
     },

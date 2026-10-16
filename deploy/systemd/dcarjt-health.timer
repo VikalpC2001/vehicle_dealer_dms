@@ -1,0 +1,10 @@
+# Wall-clock schedule (fires even while the service is skipped before the first deploy).
+[Unit]
+Description=dcarjt: health check every 15 minutes
+
+[Timer]
+OnCalendar=*:0/15
+RandomizedDelaySec=1min
+
+[Install]
+WantedBy=timers.target

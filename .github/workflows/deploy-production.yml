@@ -1,0 +1,224 @@
+# Production deployment: every push to main runs CI, then (in the `production` environment) builds the
+# three images, pushes them to Oracle Cloud Infrastructure Registry (OCIR) tagged with the commit SHA,
+# and deploys that tag to the VM over SSH with deploy/scripts/run-deploy.sh → deploy.sh (backup →
+# migrations → containers → nginx → health check; the previous release is put back automatically when
+# the health check fails).
+#
+# Nothing is built or deployed until the repository variable DEPLOY_ENABLED is "true", and only from
+# main (see deploy/README.md → "GitHub configuration"). A manual run with image_tag redeploys an
+# existing build — also the way to go back to a specific commit on purpose.
+name: Deploy production
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: Full commit SHA of an already-built release to deploy (empty = build and deploy this commit)
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+# One production deploy at a time; a newer push waits instead of cancelling a deploy halfway.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  ci:
+    name: CI
+    if: inputs.image_tag == ''
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    name: Build, push and deploy
+    needs: ci
+    # After a green CI run, or on its own for a manual redeploy of an existing tag. Only from main.
+    if: >-
+      !cancelled() && vars.DEPLOY_ENABLED == 'true' && github.ref == 'refs/heads/main' &&
+      (needs.ci.result == 'success' || (inputs.image_tag != '' && needs.ci.result == 'skipped'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    # All secrets live in this environment (deploy/README.md section 7), so only this job — on main,
+    # after any required approval — can read them.
+    environment:
+      name: production
+      url: https://${{ vars.DOMAIN || 'dcarjt.com' }}
+    env:
+      IMAGE_TAG: ${{ inputs.image_tag || github.sha }}
+      BUILD: ${{ inputs.image_tag == '' }}
+      IMAGE_PREFIX: ${{ vars.OCIR_REGISTRY }}/${{ vars.OCIR_IMAGE_NAMESPACE }}
+      # Both by default, so Ampere A1 (arm64, Always Free) and AMD/Intel shapes work. Set the variable
+      # IMAGE_PLATFORMS to just your VM's platform (e.g. linux/arm64) to roughly halve build time.
+      PLATFORMS: ${{ vars.IMAGE_PLATFORMS || 'linux/amd64,linux/arm64' }}
+      DEPLOY_ROOT: ${{ vars.DEPLOY_ROOT || '/opt/dcarjt' }}
+      REGISTRY: ${{ vars.OCIR_REGISTRY }}
+    steps:
+      - name: Check settings and tag
+        env:
+          OCIR_IMAGE_NAMESPACE: ${{ vars.OCIR_IMAGE_NAMESPACE }}
+          HAS_OCIR_USERNAME: ${{ secrets.OCIR_USERNAME != '' }}
+          HAS_OCIR_TOKEN: ${{ secrets.OCIR_AUTH_TOKEN != '' }}
+          HAS_KEY: ${{ secrets.DEPLOY_SSH_KEY != '' }}
+          HAS_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS != '' }}
+          HAS_HOST: ${{ secrets.DEPLOY_HOST != '' }}
+        run: |
+          [[ "$IMAGE_TAG" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::image_tag must be a full 40-character commit SHA"; exit 1; }
+          [[ "$DEPLOY_ROOT" =~ ^/[A-Za-z0-9._/-]+$ ]] || { echo "::error::DEPLOY_ROOT must be an absolute path"; exit 1; }
+          missing=()
+          [[ -n "$REGISTRY" ]] || missing+=("variable OCIR_REGISTRY")
+          [[ -n "$OCIR_IMAGE_NAMESPACE" ]] || missing+=("variable OCIR_IMAGE_NAMESPACE")
+          [[ "$HAS_OCIR_USERNAME" == true ]] || missing+=("secret OCIR_USERNAME")
+          [[ "$HAS_OCIR_TOKEN" == true ]] || missing+=("secret OCIR_AUTH_TOKEN")
+          [[ "$HAS_KEY" == true ]] || missing+=("secret DEPLOY_SSH_KEY")
+          [[ "$HAS_KNOWN_HOSTS" == true ]] || missing+=("secret DEPLOY_KNOWN_HOSTS")
+          [[ "$HAS_HOST" == true ]] || missing+=("secret DEPLOY_HOST")
+          if ((${#missing[@]})); then echo "::error::missing (production environment): ${missing[*]} — see deploy/README.md section 7"; exit 1; fi
+      # The files of the commit being deployed (for a manual redeploy: of that older commit).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.IMAGE_TAG }}
+          persist-credentials: false
+      - name: Set up SSH (pinned host key, no prompts)
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ vars.DEPLOY_PORT || '22' }}
+          DEPLOY_USER: ${{ vars.DEPLOY_USER || 'deploy' }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" >~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" >~/.ssh/known_hosts_deploy
+          cat >~/.ssh/config <<EOF
+          Host production
+            HostName $DEPLOY_HOST
+            Port $DEPLOY_PORT
+            User $DEPLOY_USER
+            IdentityFile ~/.ssh/deploy_key
+            IdentitiesOnly yes
+            BatchMode yes
+            StrictHostKeyChecking yes
+            UserKnownHostsFile ~/.ssh/known_hosts_deploy
+            ServerAliveInterval 30
+            ConnectTimeout 20
+          EOF
+          ssh production true
+      # A re-run of an older push must never replace a newer live release. (Going back on purpose:
+      # run the workflow with image_tag, or use rollback.sh on the server.)
+      - name: Skip when the live release is newer than this commit
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # shellcheck disable=SC2029
+          live="$(ssh production "cat $(printf '%q' "$DEPLOY_ROOT/shared/state/current_release") 2>/dev/null || true")"
+          if [[ "$live" =~ ^[0-9a-f]{40}$ && "$live" != "$IMAGE_TAG" ]]; then
+            status="$(curl -fsS -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github+json' \
+              "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/compare/$IMAGE_TAG...$live" | jq -r .status)"
+            if [[ "$status" == ahead ]]; then
+              echo "::error::the live release ${live:0:12} already contains this commit (${IMAGE_TAG:0:12}); not deploying an older version. To go back on purpose, run the workflow with image_tag=$IMAGE_TAG."
+              exit 1
+            fi
+          fi
+
+      # ── Build and push (skipped for a redeploy of an existing image_tag) ──────────────────────────
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        if: env.BUILD == 'true' && contains(env.PLATFORMS, 'arm64')
+        with:
+          image: tonistiigi/binfmt:qemu-v10.2.3@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+          platforms: arm64
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        if: env.BUILD == 'true'
+        with:
+          driver-opts: image=moby/buildkit:v0.33.1@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        if: env.BUILD == 'true'
+        with:
+          registry: ${{ vars.OCIR_REGISTRY }}
+          username: ${{ secrets.OCIR_USERNAME }}
+          password: ${{ secrets.OCIR_AUTH_TOKEN }}
+      - name: Build and push api
+        if: env.BUILD == 'true'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: EDEALER_RECORD
+          target: runtime
+          platforms: ${{ env.PLATFORMS }}
+          push: true
+          provenance: false
+          tags: ${{ env.IMAGE_PREFIX }}/api:${{ env.IMAGE_TAG }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ env.IMAGE_TAG }}
+          cache-from: type=gha,scope=prod-api
+          cache-to: type=gha,mode=max,scope=prod-api
+      - name: Build and push api-migrate
+        if: env.BUILD == 'true'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: EDEALER_RECORD
+          target: migrate
+          platforms: ${{ env.PLATFORMS }}
+          push: true
+          provenance: false
+          tags: ${{ env.IMAGE_PREFIX }}/api-migrate:${{ env.IMAGE_TAG }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ env.IMAGE_TAG }}
+          cache-from: type=gha,scope=prod-api
+      - name: Build and push frontend
+        if: env.BUILD == 'true'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: RTO-Super-Admin
+          platforms: ${{ env.PLATFORMS }}
+          push: true
+          provenance: false
+          tags: ${{ env.IMAGE_PREFIX }}/frontend:${{ env.IMAGE_TAG }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ env.IMAGE_TAG }}
+          build-args: |
+            VITE_API_BASE_URL=https://${{ vars.API_DOMAIN || 'api.dcarjt.com' }}/api/v1
+          cache-from: type=gha,scope=prod-frontend
+          cache-to: type=gha,mode=max,scope=prod-frontend
+
+      # ── Deploy ────────────────────────────────────────────────────────────────────────────────────
+      - name: Upload this release's deploy files
+        run: rsync -az --delete deploy/ "production:$DEPLOY_ROOT/releases/$IMAGE_TAG/"
+      - name: Log the server in to the registry (token via stdin)
+        env:
+          OCIR_USERNAME: ${{ secrets.OCIR_USERNAME }}
+          OCIR_AUTH_TOKEN: ${{ secrets.OCIR_AUTH_TOKEN }}
+        # Remote commands are built here on purpose; every value is quoted with printf %q.
+        run: |
+          # shellcheck disable=SC2029
+          printf '%s' "$OCIR_AUTH_TOKEN" |
+            ssh production "docker login --username $(printf '%q' "$OCIR_USERNAME") --password-stdin $(printf '%q' "$REGISTRY")"
+      # run-deploy.sh starts deploy.sh detached on the server and streams its log: if this job is
+      # cancelled or the connection drops, the deploy still finishes (or rolls itself back) there.
+      - name: Deploy
+        run: |
+          # shellcheck disable=SC2029
+          ssh production "DEPLOY_ROOT=$(printf '%q' "$DEPLOY_ROOT") $(printf '%q' "$DEPLOY_ROOT/releases/$IMAGE_TAG/scripts/run-deploy.sh") $(printf '%q' "$IMAGE_TAG")"
+      - name: Log the server out of the registry
+        if: always()
+        run: |
+          # shellcheck disable=SC2029
+          ssh production "docker logout $(printf '%q' "$REGISTRY")" || true
+      - name: Public check through Cloudflare
+        continue-on-error: true
+        env:
+          API_DOMAIN: ${{ vars.API_DOMAIN || 'api.dcarjt.com' }}
+          DOMAIN: ${{ vars.DOMAIN || 'dcarjt.com' }}
+        run: |
+          rc=0
+          if curl -fsS --max-time 20 -o /dev/null "https://$DOMAIN/"; then echo "web app OK"; else echo "::warning::https://$DOMAIN/ failed through Cloudflare"; rc=1; fi
+          if curl -fsS --max-time 20 -o /dev/null "https://$API_DOMAIN/api/v1/health/ready"; then echo "API OK"; else echo "::warning::https://$API_DOMAIN/api/v1/health/ready failed through Cloudflare"; rc=1; fi
+          exit "$rc"

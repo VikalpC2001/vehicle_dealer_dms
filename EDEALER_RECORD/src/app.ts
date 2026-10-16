@@ -11,8 +11,9 @@ import { notFoundHandler, errorHandler } from './middlewares/error.middleware';
 
 const app = express();
 
-if (config.TRUST_PROXY) {
-  app.set('trust proxy', true);
+// Which proxies may set X-Forwarded-* (see TRUST_PROXY): none unless configured.
+if (config.TRUST_PROXY !== false) {
+  app.set('trust proxy', config.TRUST_PROXY);
 }
 
 // ── Security ─────────────────────────────────────────────────────────────────
@@ -23,6 +24,8 @@ app.use(
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true,
+    // Browsers may reuse a preflight answer for 10 minutes instead of asking before every call.
+    maxAge: 600,
   }),
 );
 
@@ -42,7 +45,24 @@ if (config.NODE_ENV !== 'test') {
 
 // ── Static uploads (public read; same path shape as future CDN/object URL) ─────
 const uploadDirAbsolute = path.resolve(process.cwd(), config.UPLOAD_DIR);
-app.use('/uploads', express.static(uploadDirAbsolute));
+// The web app may embed uploaded files — PDFs in <iframe>/<object> — from its own origin, which in
+// production differs from the API's (dcarjt.com vs api.dcarjt.com). Helmet's defaults allow framing
+// by the API's own origin only.
+const uploadsFrameAncestors = helmet.contentSecurityPolicy({
+  directives: { frameAncestors: ["'self'", ...config.ALLOWED_ORIGINS] },
+});
+app.use(
+  '/uploads',
+  // Replaces Helmet's `same-origin` policy so the web app can show these files from its own host
+  // (see UPLOAD_CROSS_ORIGIN_RESOURCE_POLICY), and drops X-Frame-Options (frame-ancestors decides).
+  (_req, res, next) => {
+    res.setHeader('Cross-Origin-Resource-Policy', config.UPLOAD_CROSS_ORIGIN_RESOURCE_POLICY);
+    res.removeHeader('X-Frame-Options');
+    next();
+  },
+  uploadsFrameAncestors,
+  express.static(uploadDirAbsolute),
+);
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 app.use(config.API_PREFIX, routes);

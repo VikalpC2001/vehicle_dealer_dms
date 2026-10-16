@@ -27,7 +27,8 @@ Apply the conventions:
 - `cd EDEALER_RECORD && npx prisma validate`. Fix any errors.
 
 ## 3. Migrate
-- `npx prisma migrate dev --name <snake_case_description>` (match the existing timestamped migration naming under `prisma/migrations/`).
+- `npx prisma migrate dev --name <snake_case_description>` (match the existing timestamped migration naming under `prisma/migrations/`). Production applies these with `prisma migrate deploy` on every deploy, so **never** use `prisma db push` for a real change.
+- If `migrate dev` reports drift or offers to **reset** the database, stop: never reset or use `--force-reset`. A database built earlier with `db push` first needs `npx prisma migrate resolve --applied 20261014000000_baseline` (ask the user before running it).
 - If no database is reachable in this environment, **do not fake it** — report that, and give the user the exact command + the generated SQL to run.
 
 ## 4. Generate the client
