@@ -169,7 +169,7 @@ There is no root `.dockerignore` because each image is built from its own app fo
 | Setting | Value |
 |---------|-------|
 | Name | `dcarjt-prod` |
-| Image | **Canonical Ubuntu 24.04** (22.04 also works) — the platform image, not "Minimal" |
+| Image | **Canonical Ubuntu 24.04** (22.04 also works; 20.04 works but is outdated, see below) — the platform image, not "Minimal" |
 | Shape | **VM.Standard.A1.Flex** (Ampere, arm64): **2 OCPU / 12 GB** is comfortable (Always Free allows up to 4 OCPU / 24 GB in total). Or an AMD/Intel shape such as **VM.Standard.E5.Flex** with 1–2 OCPU / 8 GB. **Minimum 4 GB RAM**: the containers' memory limits add up to about 2.4 GB. |
 | Networking | A VCN with a **public subnet**; *Assign a public IPv4 address*: yes |
 | SSH keys | **Your own** admin public key (`~/.ssh/id_ed25519.pub`). This logs in as `ubuntu`. Not the CI key. |
@@ -181,6 +181,36 @@ After it starts:
 2. **[local]** `ssh ubuntu@<VM_IP>` works.
 
 An A1 shape in a busy region can report "Out of capacity"; try another availability domain or retry later. The images are built for both `linux/amd64` and `linux/arm64` by default, so either CPU type works (see `IMAGE_PLATFORMS` in [section 7](#7-github-secrets-and-variables)).
+
+### Already have a server with Ubuntu 20.04?
+
+Everything in this folder works on Ubuntu 20.04: provisioning and the complete deploy/rollback/backup/restore test passed on 20.04.6. The app runs in containers, so the server's Ubuntu version only matters for the server's own safety, and on 20.04 that is weakening:
+
+- Ubuntu 20.04 no longer gets free security updates (its standard support ended in 2025). Updates now need an Ubuntu Pro subscription (`sudo pro attach <token>`).
+- Docker stopped publishing releases for 20.04. The newest you can install is **Docker 28.1.1 / Compose 2.35.1**, and it will never receive security fixes. Ubuntu 24.04 gets the current Docker 29.
+
+Options, best first:
+
+1. **A new VM with Ubuntu 24.04** (recommended while nothing is deployed yet).
+   - Follow this guide on the new VM. The DNS records point at whichever VM holds the reserved public IP.
+   - You can move a reserved IP: **[OCI Console]** old instance → *Attached VNICs* → *IPv4 addresses* → unassign it, then assign it on the new instance.
+2. **Upgrade in place** (20.04 → 22.04 → 24.04).
+   1. **[OCI Console]** first take a boot volume backup: *Block Storage → Boot Volumes → your volume → Create backup*.
+   2. **[VM · ubuntu]** run `sudo apt update && sudo apt full-upgrade -y && sudo do-release-upgrade` and reboot; repeat the upgrade for 24.04.
+   3. Check that SSH and ports 80/443 still work (section 5), then run `setup-ubuntu.sh` again.
+3. **Stay on 20.04** for now: the scripts work as they are, but plan option 1 or 2.
+
+Anything that already listens on ports 80 or 443 on this server (for example a host nginx or Apache) must be stopped first. The deploy's nginx container needs both ports, and `setup-ubuntu.sh` warns about it.
+
+Data in a PostgreSQL installed directly on the server is **not** moved automatically. If it was created by this same code version (with `prisma db push`), bring it over after the first deploy. **[VM · deploy]**, with `S=/opt/dcarjt/current/scripts`:
+
+```bash
+pg_dump -Fc -h localhost -U <old user> <old db> > /opt/dcarjt/shared/restore/old.dump    # asks for the old password
+(cd /opt/dcarjt/shared/restore && sha256sum old.dump > old.dump.sha256)
+$S/restore-postgres.sh /opt/dcarjt/shared/restore/old.dump --live --skip-migrations
+# the old database has no migration history yet: record the baseline as already applied
+$S/dc.sh --profile tools run --rm migrate node_modules/.bin/prisma migrate resolve --applied 20261014000000_baseline
+```
 
 ## 5. OCI networking and firewall rules
 

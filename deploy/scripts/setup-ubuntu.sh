@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# First-time preparation of a fresh Oracle Cloud Ubuntu VM (22.04 or 24.04). Run ONCE as root:
+# First-time preparation of an Oracle Cloud Ubuntu VM (24.04 recommended; 22.04 and 20.04 also work —
+# see deploy/README.md section 4 about 20.04). Run ONCE as root:
 #
 #   sudo bash setup-ubuntu.sh --ci-public-key ci_deploy_key.pub [--deploy-user deploy] \
 #        [--deploy-root /opt/dcarjt] [--swap 2G] [--skip-upgrade]
@@ -42,6 +43,10 @@ die() { printf '[setup] ERROR: %s\n' "$*" >&2; exit 1; }
 [[ "$DEPLOY_ROOT" == /* ]] || die "--deploy-root must be an absolute path"
 [[ -z "$CI_PUBLIC_KEY" || -r "$CI_PUBLIC_KEY" ]] || die "cannot read $CI_PUBLIC_KEY"
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [[ "${VERSION_ID:-}" == 20.04 ]]; then
+  log "WARNING: Ubuntu 20.04 no longer gets free security updates, and Docker 28.1 is the last Docker"
+  log "         release for it. It works, but plan the move to Ubuntu 24.04 (deploy/README.md, section 4)."
+fi
 
 export DEBIAN_FRONTEND=noninteractive
 
@@ -52,7 +57,7 @@ if [[ "$UPGRADE" == true ]]; then
   apt-get -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold upgrade -y
 fi
 # tzdata: the backup timer's schedule names a time zone (systemd cannot parse it without zoneinfo).
-apt-get install -y ca-certificates curl gnupg rsync jq util-linux unattended-upgrades tzdata
+apt-get install -y ca-certificates curl gnupg rsync jq util-linux iproute2 unattended-upgrades tzdata
 
 # ── Docker Engine (official repository) ──────────────────────────────────────────────────────────
 if ! command -v docker >/dev/null 2>&1 || ! docker compose version >/dev/null 2>&1; then
@@ -145,6 +150,14 @@ if command -v iptables >/dev/null 2>&1; then
     log "tcp/80 and tcp/443 open after reboots too ($rules)"
   fi
 fi
+# The edge nginx container needs ports 80 and 443 on this server.
+for port in 80 443; do
+  holder="$(ss -H -ltnp "sport = :$port" 2>/dev/null | grep -v docker-proxy | head -n 1 || true)"
+  if [[ -n "$holder" ]]; then
+    log "WARNING: port $port is already in use: $holder"
+    log "         Stop that service before the first deploy (for example: sudo systemctl disable --now nginx)."
+  fi
+done
 # ufw rules do not apply to Docker-published ports and would only give a false sense of safety.
 if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
   log "NOTE: ufw is active; it does not filter Docker-published ports — restrict ports in the OCI security list instead"
